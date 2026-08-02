@@ -1,17 +1,22 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { TerminalView } from "./TerminalView";
+import { invoke } from "@tauri-apps/api/core";
+import { TerminalView, CURSOR_COLOR, CURSOR_DIM } from "./TerminalView";
 import { RemoteFilePanel } from "./RemoteFilePanel";
+import type { ConcurrentSyncControl } from "./ConcurrentWorkspace";
 import type { FolderLayout, SessionTab, SplitDirection } from "../types";
 import { guessUnixHome } from "../cwd";
 import {
+  collectLayoutSessionIds,
   countLayoutLeaves,
   ensureFolderLayout,
   layoutContainsSession,
@@ -38,6 +43,8 @@ interface TerminalWorkspaceProps {
   onSplitRatioChange: (splitId: string, ratio: number) => void;
   onReconnectSession?: (sessionId: string) => void;
   onCwdChange?: (sessionId: string, cwd: string | null) => void;
+  /** 分屏并发输入：向 Tab 栏上报全选/取消（离开或非分屏时传 null） */
+  onSyncControlChange?: (control: ConcurrentSyncControl | null) => void;
 }
 
 type CtxMenu = {
@@ -45,6 +52,34 @@ type CtxMenu = {
   y: number;
   sessionId: string;
 };
+
+const CTX_MENU_PAD = 8;
+
+/** 将菜单锚定点限制在视口内，避免贴底/贴边被裁切 */
+function clampCtxMenuPos(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): { x: number; y: number } {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let nextX = x;
+  let nextY = y;
+  if (nextX + width > vw - CTX_MENU_PAD) {
+    nextX = Math.max(CTX_MENU_PAD, vw - width - CTX_MENU_PAD);
+  }
+  if (nextX < CTX_MENU_PAD) nextX = CTX_MENU_PAD;
+  if (nextY + height > vh - CTX_MENU_PAD) {
+    // 优先翻到光标上方
+    nextY = y - height;
+    if (nextY < CTX_MENU_PAD) {
+      nextY = Math.max(CTX_MENU_PAD, vh - height - CTX_MENU_PAD);
+    }
+  }
+  if (nextY < CTX_MENU_PAD) nextY = CTX_MENU_PAD;
+  return { x: nextX, y: nextY };
+}
 
 function IconSession() {
   return (
@@ -74,6 +109,60 @@ function IconSession() {
         strokeWidth="1.25"
         strokeLinecap="round"
       />
+    </svg>
+  );
+}
+
+/** 垂直分割示意：左右两格 */
+function IconSplitVertical() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <rect
+        x="1.5"
+        y="2"
+        width="13"
+        height="12"
+        rx="1.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+      <path
+        d="M8 2.5v11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+      />
+      <rect x="3" y="4.2" width="3.6" height="7.6" rx="0.6" fill="currentColor" opacity="0.22" />
+      <rect x="9.4" y="4.2" width="3.6" height="7.6" rx="0.6" fill="currentColor" opacity="0.38" />
+    </svg>
+  );
+}
+
+/** 水平分割示意：上下两格 */
+function IconSplitHorizontal() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <rect
+        x="1.5"
+        y="2"
+        width="13"
+        height="12"
+        rx="1.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+      <path
+        d="M2 8h12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+      />
+      <rect x="3.2" y="3.4" width="9.6" height="3.2" rx="0.6" fill="currentColor" opacity="0.22" />
+      <rect x="3.2" y="9.4" width="9.6" height="3.2" rx="0.6" fill="currentColor" opacity="0.38" />
     </svg>
   );
 }
@@ -126,7 +215,7 @@ function SplitSash({
 }
 
 /**
- * 主机夹工作区：同机多会话；支持左右/上下分屏与右键菜单。
+ * 主机夹工作区：同机多会话；支持左右/上下分屏、分屏并发输入与右键菜单。
  */
 export function TerminalWorkspace({
   sessions,
@@ -143,9 +232,17 @@ export function TerminalWorkspace({
   onSplitRatioChange,
   onReconnectSession,
   onCwdChange,
+  onSyncControlChange,
 }: TerminalWorkspaceProps) {
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+  const ctxMenuRef = useRef<HTMLDivElement | null>(null);
+  const [syncIds, setSyncIds] = useState<Set<string>>(() => new Set());
+  const syncIdsRef = useRef(syncIds);
+  const sessionsRef = useRef(sessions);
+  syncIdsRef.current = syncIds;
+  sessionsRef.current = sessions;
+
   const byId = useCallback(
     (id: string) => sessions.find((s) => s.id === id),
     [sessions],
@@ -166,6 +263,118 @@ export function TerminalWorkspace({
   );
 
   const splitMode = countLayoutLeaves(layout) > 1;
+
+  const layoutIdsKey = useMemo(
+    () => collectLayoutSessionIds(layout).join("\n"),
+    [layout],
+  );
+  const layoutIds = useMemo(
+    () => (layoutIdsKey ? layoutIdsKey.split("\n") : []),
+    [layoutIdsKey],
+  );
+  const prevLayoutIdsRef = useRef<string[]>([]);
+
+  const syncCount = useMemo(
+    () => layoutIds.filter((id) => syncIds.has(id)).length,
+    [layoutIds, syncIds],
+  );
+  const allSynced =
+    splitMode && layoutIds.length > 0 && syncCount === layoutIds.length;
+
+  // 分屏叶子变化时：新窗格默认加入并发；离开布局的移除
+  useEffect(() => {
+    if (!splitMode) {
+      prevLayoutIdsRef.current = [];
+      setSyncIds((prev) => (prev.size === 0 ? prev : new Set()));
+      return;
+    }
+    setSyncIds((prev) => {
+      const prevAll = new Set(prevLayoutIdsRef.current);
+      const next = new Set<string>();
+      if (prevLayoutIdsRef.current.length === 0) {
+        for (const id of layoutIds) next.add(id);
+      } else {
+        for (const id of layoutIds) {
+          if (prev.has(id)) next.add(id);
+          else if (!prevAll.has(id)) next.add(id);
+        }
+      }
+      prevLayoutIdsRef.current = layoutIds;
+      if (
+        next.size === prev.size &&
+        [...next].every((id) => prev.has(id))
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [layoutIds, splitMode]);
+
+  const selectAllSync = useCallback(() => {
+    setSyncIds(new Set(layoutIds));
+  }, [layoutIds]);
+
+  const clearAllSync = useCallback(() => {
+    setSyncIds(new Set());
+  }, []);
+
+  const toggleSync = useCallback((sessionId: string) => {
+    setSyncIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!onSyncControlChange) return;
+    if (!workspaceActive || !splitMode) {
+      onSyncControlChange(null);
+      return;
+    }
+    onSyncControlChange({
+      allSynced,
+      syncCount,
+      total: layoutIds.length,
+      selectAll: selectAllSync,
+      clearAll: clearAllSync,
+    });
+  }, [
+    allSynced,
+    clearAllSync,
+    layoutIds.length,
+    onSyncControlChange,
+    selectAllSync,
+    splitMode,
+    syncCount,
+    workspaceActive,
+  ]);
+
+  useEffect(() => {
+    return () => onSyncControlChange?.(null);
+  }, [onSyncControlChange]);
+
+  const handleUserInput = useCallback((sourceId: string, data: string) => {
+    const bytes = Array.from(new TextEncoder().encode(data));
+    const sync = syncIdsRef.current;
+    const list = sessionsRef.current;
+
+    const targets = new Set<string>();
+    targets.add(sourceId);
+    if (sync.size > 0) {
+      for (const id of sync) {
+        const tab = list.find((t) => t.id === id);
+        if (tab?.status === "connected") targets.add(id);
+      }
+    }
+
+    for (const id of targets) {
+      const tab = list.find((t) => t.id === id);
+      if (tab?.status !== "connected") continue;
+      invoke("ssh_write", { sessionId: id, data: bytes }).catch(console.error);
+    }
+  }, []);
 
   const canBrowseFiles =
     Boolean(activeTab) &&
@@ -190,11 +399,29 @@ export function TerminalWorkspace({
     };
   }, [ctxMenu]);
 
+  // 菜单渲染后按实际尺寸贴边翻转，避免最底窗格被裁切
+  useLayoutEffect(() => {
+    if (!ctxMenu) return;
+    const el = ctxMenuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const next = clampCtxMenuPos(ctxMenu.x, ctxMenu.y, rect.width, rect.height);
+    if (next.x !== ctxMenu.x || next.y !== ctxMenu.y) {
+      setCtxMenu((prev) =>
+        prev ? { ...prev, x: next.x, y: next.y } : prev,
+      );
+    }
+  }, [ctxMenu]);
+
   const openCtxMenu = (sessionId: string, e: ReactMouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     onSelectSession(sessionId);
-    setCtxMenu({ x: e.clientX, y: e.clientY, sessionId });
+    // 先按估算高度上翻，减少首帧闪到窗外（含示意图菜单项）
+    const estH = 180;
+    const estW = 200;
+    const pos = clampCtxMenuPos(e.clientX, e.clientY, estW, estH);
+    setCtxMenu({ x: pos.x, y: pos.y, sessionId });
   };
 
   const bumpLayout = useCallback(() => {
@@ -207,10 +434,13 @@ export function TerminalWorkspace({
       if (!tab) return null;
       const focused = tab.id === activeSessionId;
       const visible = workspaceActive;
+      const inSync = syncIds.has(tab.id);
       return (
         <div
           key={tab.id}
-          className={`split-leaf${focused ? " is-focused" : ""}`}
+          className={`split-leaf${focused ? " is-focused" : ""}${
+            inSync ? " in-sync" : ""
+          }`}
           onMouseDown={() => onSelectSession(tab.id)}
           onContextMenuCapture={(e) => openCtxMenu(tab.id, e)}
         >
@@ -221,6 +451,10 @@ export function TerminalWorkspace({
               visible={visible}
               focused={visible && focused && !filesOpen}
               layoutEpoch={layoutEpoch}
+              cursorBlink={false}
+              cursorStyle={inSync || focused ? "bar" : "block"}
+              cursorColor={inSync || focused ? CURSOR_COLOR : CURSOR_DIM}
+              onUserInput={(data) => handleUserInput(tab.id, data)}
               systemNotice={tab.systemNotice}
               homeHint={
                 tab.kind === "local" ? null : guessUnixHome(tab.username)
@@ -277,6 +511,10 @@ export function TerminalWorkspace({
 
   const ctxTab = ctxMenu ? byId(ctxMenu.sessionId) : null;
   const canSplitCtx = ctxTab?.status === "connected";
+  const ctxInSync = ctxMenu ? syncIds.has(ctxMenu.sessionId) : false;
+  const ctxInLayout = ctxMenu
+    ? layoutContainsSession(layout, ctxMenu.sessionId)
+    : false;
 
   return (
     <div className="terminal-workspace">
@@ -351,6 +589,7 @@ export function TerminalWorkspace({
               {ordered.map((tab, index) => {
                 const selected = tab.id === activeSessionId;
                 const inLayout = layoutContainsSession(layout, tab.id);
+                const inSync = splitMode && syncIds.has(tab.id);
                 const name = `连接 ${index + 1}`;
                 return (
                   <div
@@ -359,14 +598,20 @@ export function TerminalWorkspace({
                       tab.status === "error" ? " error" : ""
                     }${tab.status === "connecting" ? " connecting" : ""}${
                       splitMode && !inLayout ? " dimmed" : ""
-                    }`}
+                    }${inSync ? " in-sync" : ""}`}
                   >
                     <button
                       type="button"
                       className="solo-subtab-label"
                       role="tab"
                       aria-selected={selected}
-                      title={name}
+                      title={
+                        inSync
+                          ? `${name}（已加入并发）`
+                          : splitMode && inLayout
+                            ? `${name}（未加入并发）`
+                            : name
+                      }
                       aria-label={name}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -430,6 +675,7 @@ export function TerminalWorkspace({
 
       {ctxMenu && canSplitCtx ? (
         <div
+          ref={ctxMenuRef}
           className="session-ctx-menu"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           role="menu"
@@ -438,23 +684,49 @@ export function TerminalWorkspace({
           <button
             type="button"
             role="menuitem"
+            className="session-ctx-menu-item"
             onClick={() => {
               onSplitSession(ctxMenu.sessionId, "vertical");
               setCtxMenu(null);
             }}
           >
-            垂直分割（左右）
+            <span className="session-ctx-menu-icon" aria-hidden="true">
+              <IconSplitVertical />
+            </span>
+            <span className="session-ctx-menu-text">
+              <span className="session-ctx-menu-title">垂直分割</span>
+              <span className="session-ctx-menu-hint">左右分屏</span>
+            </span>
           </button>
           <button
             type="button"
             role="menuitem"
+            className="session-ctx-menu-item"
             onClick={() => {
               onSplitSession(ctxMenu.sessionId, "horizontal");
               setCtxMenu(null);
             }}
           >
-            水平分割（上下）
+            <span className="session-ctx-menu-icon" aria-hidden="true">
+              <IconSplitHorizontal />
+            </span>
+            <span className="session-ctx-menu-text">
+              <span className="session-ctx-menu-title">水平分割</span>
+              <span className="session-ctx-menu-hint">上下分屏</span>
+            </span>
           </button>
+          {splitMode && ctxInLayout ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                toggleSync(ctxMenu.sessionId);
+                setCtxMenu(null);
+              }}
+            >
+              {ctxInSync ? "退出并发输入" : "加入并发输入"}
+            </button>
+          ) : null}
           {splitMode || ordered.length > 1 ? (
             <button
               type="button"

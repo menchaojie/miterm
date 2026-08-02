@@ -10,7 +10,7 @@ interface AppTabBarProps {
   folderErrorMessage?: string;
   /** 当前并发组内会话的错误信息 */
   groupErrorMessage?: string;
-  /** 当前是否在并发组 Tab，且可切换全选/取消 */
+  /** 当前并发组或分屏主机夹可切换全选/取消并发输入 */
   syncToggle?: {
     allSynced: boolean;
     syncCount: number;
@@ -261,6 +261,8 @@ export function AppTabBar({
               count,
               activeIdx,
             );
+            const canToggle = selected && Boolean(syncToggle);
+            const allSynced = Boolean(syncToggle?.allSynced);
             return (
               <div
                 key={folder.id}
@@ -268,6 +270,30 @@ export function AppTabBar({
                 role="tab"
                 aria-selected={selected}
               >
+                {canToggle ? (
+                  <button
+                    type="button"
+                    className={`app-tab-group-icon-btn${
+                      allSynced ? " is-all" : " is-partial"
+                    }`}
+                    title={
+                      allSynced
+                        ? `全部取消并发输入（当前 ${syncToggle!.syncCount}/${syncToggle!.total}）`
+                        : `全选并发输入（当前 ${syncToggle!.syncCount}/${syncToggle!.total}）`
+                    }
+                    aria-label={
+                      allSynced ? "全部取消并发输入" : "全选并发输入"
+                    }
+                    aria-pressed={allSynced}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      syncToggle?.onToggle();
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    {allSynced ? <IconGroupAllOn /> : <IconGroupOneOn />}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="app-tab-label"

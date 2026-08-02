@@ -1652,6 +1652,10 @@ a,
   opacity: 0.55;
 }
 
+.solo-subtab.in-sync .solo-subtab-num {
+  color: #9fd6ef;
+}
+
 /* 主机夹分屏 */
 .terminal-workspace-stages.split-root {
   display: flex;
@@ -1746,8 +1750,8 @@ body.split-sash-dragging .split-sash-horizontal {
 
 .session-ctx-menu {
   position: fixed;
-  z-index: 1000;
-  min-width: 168px;
+  z-index: 2000;
+  min-width: 188px;
   padding: 4px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 6px;
@@ -1756,9 +1760,11 @@ body.split-sash-dragging .split-sash-horizontal {
 }
 
 .session-ctx-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  height: 30px;
+  min-height: 30px;
   padding: 0 10px;
   border: none;
   border-radius: 4px;
@@ -1769,9 +1775,56 @@ body.split-sash-dragging .split-sash-horizontal {
   cursor: pointer;
 }
 
+.session-ctx-menu button.session-ctx-menu-item {
+  min-height: 40px;
+  padding: 5px 10px;
+}
+
+.session-ctx-menu-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  background: rgba(61, 159, 214, 0.12);
+  color: #9fd6ef;
+  border: 1px solid rgba(120, 190, 230, 0.22);
+}
+
+.session-ctx-menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.session-ctx-menu-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.session-ctx-menu-hint {
+  font-size: 11px;
+  color: #8a97a4;
+}
+
 .session-ctx-menu button:hover {
   background: rgba(79, 195, 247, 0.16);
   color: #fff;
+}
+
+.session-ctx-menu button:hover .session-ctx-menu-icon {
+  background: rgba(61, 159, 214, 0.22);
+  border-color: rgba(140, 210, 245, 0.4);
+  color: #c8eefc;
+}
+
+.session-ctx-menu button:hover .session-ctx-menu-hint {
+  color: #b7c6d4;
 }
 
 .session-ctx-menu button.danger:hover {

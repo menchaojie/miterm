@@ -1232,7 +1232,7 @@ function App() {
         folderErrorMessage={folderErrorMessage}
         groupErrorMessage={groupErrorMessage}
         syncToggle={
-          activeGroup && syncControl
+          syncControl
             ? {
                 allSynced: syncControl.allSynced,
                 syncCount: syncControl.syncCount,
@@ -1356,6 +1356,9 @@ function App() {
                   onSplitRatioChange={(splitId, ratio) => {
                     changeFolderSplitRatio(folder.id, splitId, ratio);
                   }}
+                  onSyncControlChange={
+                    visible ? handleSyncControlChange : undefined
+                  }
                 />
               </div>
             );
