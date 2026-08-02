@@ -827,11 +827,14 @@ export function RemoteFilePanel({
           !connected || busy ? " is-disabled" : ""
         }`}
       >
-        <div className="remote-file-actions">
+        <div className="remote-file-upload-target" title={uploadDir}>
+          上传到 → {basename(uploadDir)}
+        </div>
+        <div className="remote-file-dropzone-center">
           <div className="remote-file-upload-menu" ref={uploadMenuRef}>
             <button
               type="button"
-              className="remote-file-action-btn"
+              className="remote-file-action-btn remote-file-upload-main-btn"
               disabled={!connected || busy}
               title={`上传到 ${uploadDir}`}
               aria-expanded={uploadMenuOpen}
@@ -860,14 +863,11 @@ export function RemoteFilePanel({
               </div>
             ) : null}
           </div>
-          <span className="remote-file-upload-hint" title={uploadDir}>
-            → {basename(uploadDir)}
-          </span>
-        </div>
-        <div className="remote-file-drop-hint">
-          {dropActive
-            ? "松开以上传…"
-            : "或将文件 / 文件夹拖到此处"}
+          <div className="remote-file-drop-hint">
+            {dropActive
+              ? "松开以上传…"
+              : "将文件 / 文件夹拖到此区域"}
+          </div>
         </div>
       </div>
 
