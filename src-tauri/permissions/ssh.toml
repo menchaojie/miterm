@@ -9,6 +9,7 @@ commands.allow = [
   "ssh_disconnect",
   "sftp_list",
   "sftp_upload",
+  "sftp_upload_dir",
   "sftp_download",
   "sftp_download_dir"
 ]

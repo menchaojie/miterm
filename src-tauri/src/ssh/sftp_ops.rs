@@ -488,6 +488,263 @@ pub fn download_dir(
     Ok(local_root_disp)
 }
 
+struct PlannedLocalFile {
+    local: PathBuf,
+    /// 相对本地根的 unix 风格路径
+    rel: String,
+    size: u64,
+}
+
+fn walk_local(
+    root: &Path,
+    rel_prefix: &str,
+    dirs: &mut Vec<String>,
+    files: &mut Vec<PlannedLocalFile>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(root).map_err(|e| format!("readdir {}: {e}", root.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("readdir entry: {e}"))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.is_empty() || name == "." || name == ".." {
+            continue;
+        }
+        // 跳过明显危险/无用名
+        if name.contains('\0') || name.contains('/') || name.contains('\\') {
+            continue;
+        }
+        let child = entry.path();
+        let ft = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        // 不跟随符号链接，避免环与意外穿越
+        if ft.is_symlink() {
+            continue;
+        }
+        let child_rel = if rel_prefix.is_empty() {
+            name
+        } else {
+            format!("{rel_prefix}/{name}")
+        };
+        if ft.is_dir() {
+            dirs.push(child_rel.clone());
+            walk_local(&child, &child_rel, dirs, files)?;
+        } else if ft.is_file() {
+            if files.len() >= MAX_DIR_FILES {
+                return Err(format!(
+                    "目录内文件超过 {MAX_DIR_FILES} 个，请缩小范围后再上传"
+                ));
+            }
+            let size = fs::metadata(&child).map(|m| m.len()).unwrap_or(0);
+            files.push(PlannedLocalFile {
+                local: child,
+                rel: child_rel,
+                size,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn ensure_remote_dir(sftp: &ssh2::Sftp, path: &str) -> Result<(), String> {
+    let path = normalize_remote_dir(path);
+    if path == "/" {
+        return Ok(());
+    }
+    // 自顶向下创建缺失的父目录
+    let mut acc = String::new();
+    for seg in path.split('/').filter(|s| !s.is_empty()) {
+        acc.push('/');
+        acc.push_str(seg);
+        match sftp.stat(Path::new(&acc)) {
+            Ok(st) if st.is_dir() => continue,
+            Ok(_) => return Err(format!("远程路径已存在且不是目录: {acc}")),
+            Err(_) => {
+                sftp.mkdir(Path::new(&acc), 0o755)
+                    .map_err(|e| format!("mkdir {acc}: {e}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn remote_join_rel(remote_root: &str, rel_unix: &str) -> String {
+    let mut out = normalize_remote_dir(remote_root);
+    for seg in rel_unix.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            continue;
+        }
+        out = join_remote(&out, seg);
+    }
+    out
+}
+
+fn copy_local_to_remote(
+    app: &AppHandle,
+    session_id: &str,
+    tid: &str,
+    sftp: &ssh2::Sftp,
+    local_path: &Path,
+    remote_path: &str,
+    local_disp: &str,
+    file_size: u64,
+    file_index: u64,
+    file_count: u64,
+    bytes_base: u64,
+    bytes_total: u64,
+) -> Result<(), String> {
+    let mut local = File::open(local_path).map_err(|e| format!("open local: {e}"))?;
+    let mut remote = sftp
+        .create(Path::new(remote_path))
+        .map_err(|e| format!("create remote {remote_path}: {e}"))?;
+
+    let display_total = if bytes_total > 0 {
+        bytes_total
+    } else {
+        file_size
+    };
+
+    emit_progress(
+        app,
+        session_id,
+        tid,
+        "upload",
+        remote_path,
+        local_disp,
+        bytes_base,
+        display_total,
+        file_index,
+        file_count,
+        false,
+        None,
+    );
+
+    let mut buf = vec![0u8; CHUNK];
+    let mut file_done: u64 = 0;
+    loop {
+        let n = local.read(&mut buf).map_err(|e| format!("read local: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        remote
+            .write_all(&buf[..n])
+            .map_err(|e| format!("write remote: {e}"))?;
+        file_done += n as u64;
+        emit_progress(
+            app,
+            session_id,
+            tid,
+            "upload",
+            remote_path,
+            local_disp,
+            bytes_base + file_done,
+            display_total,
+            file_index,
+            file_count,
+            false,
+            None,
+        );
+    }
+    Ok(())
+}
+
+/// 递归上传本地目录到远端：在 `remote_dir` 下创建同名文件夹。
+pub fn upload_dir(
+    app: &AppHandle,
+    session_id: &str,
+    side: &SftpSideSession,
+    remote_dir: &str,
+    local_root: &Path,
+) -> Result<String, String> {
+    if !local_root.is_dir() {
+        return Err("请选择本地文件夹".into());
+    }
+    let folder_name = local_root
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "无效的本地目录名".to_string())?;
+
+    let remote_parent = normalize_remote_dir(remote_dir);
+    let remote_root = join_remote(&remote_parent, &folder_name);
+
+    let mut dirs: Vec<String> = Vec::new();
+    let mut files: Vec<PlannedLocalFile> = Vec::new();
+    walk_local(local_root, "", &mut dirs, &mut files)?;
+    // 浅层目录先创建
+    dirs.sort_by_key(|d| d.matches('/').count());
+
+    let sftp = side
+        .session
+        .sftp()
+        .map_err(|e| format!("open sftp: {e}"))?;
+
+    ensure_remote_dir(&sftp, &remote_root)?;
+    for rel in &dirs {
+        let remote_subdir = remote_join_rel(&remote_root, rel);
+        ensure_remote_dir(&sftp, &remote_subdir)?;
+    }
+
+    let file_count = files.len() as u64;
+    let bytes_total: u64 = files.iter().map(|f| f.size).sum();
+    let tid = transfer_id();
+    let local_disp = local_root.to_string_lossy().into_owned();
+
+    emit_progress(
+        app,
+        session_id,
+        &tid,
+        "upload",
+        &remote_root,
+        &local_disp,
+        0,
+        bytes_total,
+        if file_count > 0 { 1 } else { 0 },
+        file_count,
+        false,
+        None,
+    );
+
+    let mut bytes_done: u64 = 0;
+    for (i, file) in files.iter().enumerate() {
+        let file_index = (i + 1) as u64;
+        let remote_path = remote_join_rel(&remote_root, &file.rel);
+        let file_local_disp = file.local.to_string_lossy().into_owned();
+        copy_local_to_remote(
+            app,
+            session_id,
+            &tid,
+            &sftp,
+            &file.local,
+            &remote_path,
+            &file_local_disp,
+            file.size,
+            file_index,
+            file_count,
+            bytes_done,
+            bytes_total,
+        )?;
+        bytes_done += file.size;
+    }
+
+    emit_progress(
+        app,
+        session_id,
+        &tid,
+        "upload",
+        &remote_root,
+        &local_disp,
+        bytes_done.max(bytes_total),
+        bytes_total,
+        file_count,
+        file_count,
+        true,
+        None,
+    );
+
+    Ok(remote_root)
+}
+
 fn local_join(root: &Path, rel_unix: &str) -> PathBuf {
     let mut out = root.to_path_buf();
     for seg in rel_unix.split('/') {
@@ -641,6 +898,12 @@ pub fn pick_save_path(default_name: &str) -> Result<Option<PathBuf>, String> {
 pub fn pick_folder() -> Result<Option<PathBuf>, String> {
     Ok(rfd::FileDialog::new()
         .set_title("选择保存位置（将在此创建同名文件夹）")
+        .pick_folder())
+}
+
+pub fn pick_upload_folder() -> Result<Option<PathBuf>, String> {
+    Ok(rfd::FileDialog::new()
+        .set_title("选择要上传的文件夹")
         .pick_folder())
 }
 

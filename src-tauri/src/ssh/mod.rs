@@ -485,4 +485,26 @@ impl SshSessionManager {
         }
         result
     }
+
+    pub fn sftp_upload_dir(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        remote_dir: &str,
+    ) -> Result<Option<String>, String> {
+        let local = match sftp_ops::pick_upload_folder()? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let (auth, slot) = self.sftp_handles(session_id)?;
+        let mut guard = sftp_ops::ensure_sftp(&slot, &auth)?;
+        let result = {
+            let side = guard.as_ref().ok_or_else(|| "SFTP not ready".to_string())?;
+            sftp_ops::upload_dir(app, session_id, side, remote_dir, &local).map(Some)
+        };
+        if result.is_err() {
+            *guard = None;
+        }
+        result
+    }
 }

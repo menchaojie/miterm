@@ -164,6 +164,20 @@ async fn sftp_download_dir(
 }
 
 #[tauri::command]
+async fn sftp_upload_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: SftpUploadParams,
+) -> Result<Option<String>, String> {
+    let ssh = Arc::clone(&state.ssh);
+    tokio::task::spawn_blocking(move || {
+        ssh.sftp_upload_dir(&app, &params.session_id, &params.remote_dir)
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
 async fn list_saved_hosts(state: State<'_, AppState>) -> Result<Vec<SavedHost>, String> {
     let hosts = Arc::clone(&state.hosts);
     tokio::task::spawn_blocking(move || hosts.list())
@@ -280,6 +294,7 @@ pub fn run() {
             ssh_disconnect,
             sftp_list,
             sftp_upload,
+            sftp_upload_dir,
             sftp_download,
             sftp_download_dir,
             list_saved_hosts,

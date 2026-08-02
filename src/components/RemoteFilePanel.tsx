@@ -414,6 +414,14 @@ export function RemoteFilePanel({
     void loadRoot(pathInput.trim() || "/");
   };
 
+  const afterUpload = async (remote: string | null) => {
+    if (!remote) return;
+    await refreshNode(uploadDir);
+    if (uploadDir !== rootPath && !expanded.has(uploadDir)) {
+      setExpanded((prev) => new Set(prev).add(uploadDir));
+    }
+  };
+
   const onUpload = async () => {
     if (!connected || busy) return;
     setBusy(true);
@@ -422,12 +430,23 @@ export function RemoteFilePanel({
       const remote = await invoke<string | null>("sftp_upload", {
         params: { sessionId, remoteDir: uploadDir },
       });
-      if (remote) {
-        await refreshNode(uploadDir);
-        if (uploadDir !== rootPath && !expanded.has(uploadDir)) {
-          setExpanded((prev) => new Set(prev).add(uploadDir));
-        }
-      }
+      await afterUpload(remote);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onUploadDir = async () => {
+    if (!connected || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const remote = await invoke<string | null>("sftp_upload_dir", {
+        params: { sessionId, remoteDir: uploadDir },
+      });
+      await afterUpload(remote);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -650,10 +669,19 @@ export function RemoteFilePanel({
           type="button"
           className="remote-file-action-btn"
           disabled={!connected || busy}
-          title={`上传到 ${uploadDir}`}
+          title={`上传文件到 ${uploadDir}`}
           onClick={() => void onUpload()}
         >
-          上传…
+          上传文件…
+        </button>
+        <button
+          type="button"
+          className="remote-file-action-btn"
+          disabled={!connected || busy}
+          title={`上传文件夹到 ${uploadDir}（将创建同名目录）`}
+          onClick={() => void onUploadDir()}
+        >
+          上传文件夹…
         </button>
         <span className="remote-file-upload-hint" title={uploadDir}>
           → {basename(uploadDir)}
