@@ -1,0 +1,252 @@
+import { useEffect, useState } from "react";
+import {
+  AUTO_RECONNECT_MAX_ATTEMPTS_MAX,
+  AUTO_RECONNECT_MAX_ATTEMPTS_MIN,
+  DEFAULT_SETTINGS,
+  DEFAULT_SHORTCUTS,
+  SHORTCUT_ACTIONS,
+  findShortcutConflict,
+  formatShortcut,
+  shortcutFromEvent,
+  type AppSettings,
+  type ShortcutActionId,
+  type ShortcutBinding,
+} from "../settings";
+
+interface SettingsModalProps {
+  open: boolean;
+  settings: AppSettings;
+  onClose: () => void;
+  onSave: (settings: AppSettings) => void;
+}
+
+export function SettingsModal({
+  open,
+  settings,
+  onClose,
+  onSave,
+}: SettingsModalProps) {
+  const [draft, setDraft] = useState<AppSettings>(settings);
+  const [recording, setRecording] = useState<ShortcutActionId | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft(structuredClone(settings));
+    setRecording(null);
+    setError("");
+  }, [open, settings]);
+
+  useEffect(() => {
+    if (!open || !recording) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setRecording(null);
+        return;
+      }
+      const next = shortcutFromEvent(e);
+      if (!next) return;
+
+      const conflict = findShortcutConflict(draft.shortcuts, recording, next);
+      if (conflict) {
+        const label =
+          SHORTCUT_ACTIONS.find((a) => a.id === conflict)?.label ?? conflict;
+        setError(`与「${label}」冲突，请换一组按键`);
+        return;
+      }
+
+      setDraft((d) => ({
+        ...d,
+        shortcuts: { ...d.shortcuts, [recording]: next },
+      }));
+      setError("");
+      setRecording(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [open, recording, draft.shortcuts]);
+
+  if (!open) return null;
+
+  const setBinding = (id: ShortcutActionId, binding: ShortcutBinding) => {
+    const conflict = findShortcutConflict(draft.shortcuts, id, binding);
+    if (conflict) {
+      const label =
+        SHORTCUT_ACTIONS.find((a) => a.id === conflict)?.label ?? conflict;
+      setError(`与「${label}」冲突`);
+      return;
+    }
+    setError("");
+    setDraft((d) => ({
+      ...d,
+      shortcuts: { ...d.shortcuts, [id]: binding },
+    }));
+  };
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !recording) onClose();
+      }}
+    >
+      <div
+        className="settings-modal"
+        role="dialog"
+        aria-labelledby="settings-title"
+      >
+        <h2 id="settings-title" className="settings-title">
+          设置
+        </h2>
+
+        <section className="settings-section">
+          <h3 className="settings-section-title">连接</h3>
+          <p className="settings-hint">
+            异常断线（网络/超时）时可自动重连；主动关 Tab、以及远程{" "}
+            <code>exit</code> 退出不会自动重连（终端内可点「重新连接」）。应用会启用
+            TCP/SSH keepalive 以减少空闲被踢。
+          </p>
+          <label className="settings-check-row">
+            <input
+              type="checkbox"
+              checked={draft.autoReconnect}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, autoReconnect: e.target.checked }))
+              }
+            />
+            <span>断线自动重连</span>
+          </label>
+          <label className="settings-field-row">
+            <span className="settings-field-label">最大重试次数</span>
+            <input
+              type="number"
+              className="settings-number-input"
+              min={AUTO_RECONNECT_MAX_ATTEMPTS_MIN}
+              max={AUTO_RECONNECT_MAX_ATTEMPTS_MAX}
+              disabled={!draft.autoReconnect}
+              value={draft.autoReconnectMaxAttempts}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                setDraft((d) => ({
+                  ...d,
+                  autoReconnectMaxAttempts: Number.isFinite(n)
+                    ? n
+                    : d.autoReconnectMaxAttempts,
+                }));
+              }}
+            />
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h3 className="settings-section-title">快捷键</h3>
+          <p className="settings-hint">
+            点击「更改」后按下新组合键；Esc 取消录制。默认：Ctrl+Tab /
+            Ctrl+Shift+Tab 切会话 Tab；Ctrl+Shift+[ / ] 切并发窗格或主机夹二级；Ctrl+1～9
+            跳到对应 Tab（1=主机列表）。
+          </p>
+
+          <div className="settings-shortcut-list">
+            {SHORTCUT_ACTIONS.map((action) => {
+              const binding = draft.shortcuts[action.id];
+              const isRec = recording === action.id;
+              return (
+                <div key={action.id} className="settings-shortcut-row">
+                  <div className="settings-shortcut-meta">
+                    <span className="settings-shortcut-label">
+                      {action.label}
+                    </span>
+                    {action.hint ? (
+                      <span className="settings-shortcut-desc">
+                        {action.hint}
+                      </span>
+                    ) : null}
+                  </div>
+                  <kbd
+                    className={`settings-shortcut-kbd${isRec ? " recording" : ""}`}
+                  >
+                    {isRec ? "按下快捷键…" : formatShortcut(binding)}
+                  </kbd>
+                  <div className="settings-shortcut-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        setError("");
+                        setRecording(isRec ? null : action.id);
+                      }}
+                    >
+                      {isRec ? "取消" : "更改"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      title="恢复该项默认"
+                      onClick={() => {
+                        setRecording(null);
+                        setBinding(action.id, DEFAULT_SHORTCUTS[action.id]);
+                      }}
+                    >
+                      默认
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {error ? <div className="settings-error">{error}</div> : null}
+        </section>
+
+        <div className="settings-footer">
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={Boolean(recording)}
+            onClick={() => {
+              setDraft(structuredClone(DEFAULT_SETTINGS));
+              setError("");
+              setRecording(null);
+            }}
+          >
+            全部恢复默认
+          </button>
+          <div className="settings-footer-right">
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={Boolean(recording)}
+              onClick={onClose}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={Boolean(recording)}
+              onClick={() =>
+                onSave({
+                  ...draft,
+                  autoReconnectMaxAttempts: Math.min(
+                    AUTO_RECONNECT_MAX_ATTEMPTS_MAX,
+                    Math.max(
+                      AUTO_RECONNECT_MAX_ATTEMPTS_MIN,
+                      Math.floor(draft.autoReconnectMaxAttempts) ||
+                        DEFAULT_SETTINGS.autoReconnectMaxAttempts,
+                    ),
+                  ),
+                })
+              }
+            >
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

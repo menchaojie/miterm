@@ -1,0 +1,14 @@
+[[permission]]
+identifier = "allow-host-commands"
+description = "Allow listing, saving and deleting saved SSH hosts and categories."
+commands.allow = [
+  "list_saved_hosts",
+  "save_host",
+  "update_saved_host",
+  "delete_saved_host",
+  "touch_saved_host",
+  "list_categories",
+  "create_category",
+  "update_category",
+  "delete_category",
+]

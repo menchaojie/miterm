@@ -1,0 +1,14 @@
+[[permission]]
+identifier = "allow-ssh-commands"
+description = "Allow SSH/local terminal and SFTP file commands."
+commands.allow = [
+  "ssh_connect",
+  "local_connect",
+  "ssh_write",
+  "ssh_resize",
+  "ssh_disconnect",
+  "sftp_list",
+  "sftp_upload",
+  "sftp_download",
+  "sftp_download_dir"
+]
