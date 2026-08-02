@@ -13,37 +13,38 @@ import { invoke } from "@tauri-apps/api/core";
 import { TerminalView, CURSOR_COLOR, CURSOR_DIM } from "./TerminalView";
 import { RemoteFilePanel } from "./RemoteFilePanel";
 import type { ConcurrentSyncControl } from "./ConcurrentWorkspace";
-import type { FolderLayout, SessionTab, SplitDirection } from "../types";
+import type {
+  FolderLayout,
+  FolderSubTab,
+  SessionTab,
+  SplitDirection,
+} from "../types";
 import { guessUnixHome } from "../cwd";
 import {
   collectLayoutSessionIds,
   countLayoutLeaves,
-  ensureFolderLayout,
   layoutContainsSession,
 } from "../splitLayout";
 
 interface TerminalWorkspaceProps {
   sessions: SessionTab[];
-  /** 二级会话顺序 */
-  sessionIds: string[];
+  /** 二级 Tab（每个 Tab 内可多分屏窗格） */
+  subTabs: FolderSubTab[];
+  activeSubTabId: string;
   activeSessionId: string;
-  layout?: FolderLayout;
-  /** 工作区是否在前台（回主机列表 / 切走一级 Tab 时应为 false） */
   workspaceActive?: boolean;
-  /** 远程文件侧栏（由 App 控制，便于全局快捷键） */
   filesOpen: boolean;
   onFilesOpenChange: (open: boolean) => void;
+  onSelectSubTab: (subTabId: string) => void;
   onSelectSession: (sessionId: string) => void;
+  onCloseSubTab: (subTabId: string) => void;
   onCloseSession: (sessionId: string) => void;
-  /** 同主机再开一条连接（Tab 模式 / 兼容） */
+  /** 新建二级 Tab */
   onAddSession: () => void;
-  /** 右键分屏：在指定会话窗格上拆出同机新连接 */
   onSplitSession: (sessionId: string, direction: SplitDirection) => void;
-  /** 拖动分割条改比例 */
   onSplitRatioChange: (splitId: string, ratio: number) => void;
   onReconnectSession?: (sessionId: string) => void;
   onCwdChange?: (sessionId: string, cwd: string | null) => void;
-  /** 分屏并发输入：向 Tab 栏上报全选/取消（离开或非分屏时传 null） */
   onSyncControlChange?: (control: ConcurrentSyncControl | null) => void;
 }
 
@@ -55,7 +56,6 @@ type CtxMenu = {
 
 const CTX_MENU_PAD = 8;
 
-/** 将菜单锚定点限制在视口内，避免贴底/贴边被裁切 */
 function clampCtxMenuPos(
   x: number,
   y: number,
@@ -71,7 +71,6 @@ function clampCtxMenuPos(
   }
   if (nextX < CTX_MENU_PAD) nextX = CTX_MENU_PAD;
   if (nextY + height > vh - CTX_MENU_PAD) {
-    // 优先翻到光标上方
     nextY = y - height;
     if (nextY < CTX_MENU_PAD) {
       nextY = Math.max(CTX_MENU_PAD, vh - height - CTX_MENU_PAD);
@@ -113,7 +112,6 @@ function IconSession() {
   );
 }
 
-/** 垂直分割示意：左右两格 */
 function IconSplitVertical() {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -134,13 +132,28 @@ function IconSplitVertical() {
         strokeWidth="1.35"
         strokeLinecap="round"
       />
-      <rect x="3" y="4.2" width="3.6" height="7.6" rx="0.6" fill="currentColor" opacity="0.22" />
-      <rect x="9.4" y="4.2" width="3.6" height="7.6" rx="0.6" fill="currentColor" opacity="0.38" />
+      <rect
+        x="3"
+        y="4.2"
+        width="3.6"
+        height="7.6"
+        rx="0.6"
+        fill="currentColor"
+        opacity="0.22"
+      />
+      <rect
+        x="9.4"
+        y="4.2"
+        width="3.6"
+        height="7.6"
+        rx="0.6"
+        fill="currentColor"
+        opacity="0.38"
+      />
     </svg>
   );
 }
 
-/** 水平分割示意：上下两格 */
 function IconSplitHorizontal() {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -161,8 +174,24 @@ function IconSplitHorizontal() {
         strokeWidth="1.35"
         strokeLinecap="round"
       />
-      <rect x="3.2" y="3.4" width="9.6" height="3.2" rx="0.6" fill="currentColor" opacity="0.22" />
-      <rect x="3.2" y="9.4" width="9.6" height="3.2" rx="0.6" fill="currentColor" opacity="0.38" />
+      <rect
+        x="3.2"
+        y="3.4"
+        width="9.6"
+        height="3.2"
+        rx="0.6"
+        fill="currentColor"
+        opacity="0.22"
+      />
+      <rect
+        x="3.2"
+        y="9.4"
+        width="9.6"
+        height="3.2"
+        rx="0.6"
+        fill="currentColor"
+        opacity="0.38"
+      />
     </svg>
   );
 }
@@ -215,17 +244,19 @@ function SplitSash({
 }
 
 /**
- * 主机夹工作区：同机多会话；支持左右/上下分屏、分屏并发输入与右键菜单。
+ * 主机夹工作区：二级 Tab + Tab 内分屏；分屏不新增二级 Tab。
  */
 export function TerminalWorkspace({
   sessions,
-  sessionIds,
+  subTabs,
+  activeSubTabId,
   activeSessionId,
-  layout: layoutProp,
   workspaceActive = true,
   filesOpen,
   onFilesOpenChange,
+  onSelectSubTab,
   onSelectSession,
+  onCloseSubTab,
   onCloseSession,
   onAddSession,
   onSplitSession,
@@ -248,18 +279,14 @@ export function TerminalWorkspace({
     [sessions],
   );
 
-  const ordered = sessionIds
-    .map((id) => byId(id))
-    .filter((t): t is SessionTab => Boolean(t));
-
-  const activeTab = useMemo(
-    () => ordered.find((t) => t.id === activeSessionId) ?? ordered[0],
-    [ordered, activeSessionId],
+  const activeSubTab = useMemo(
+    () => subTabs.find((t) => t.id === activeSubTabId) ?? subTabs[0],
+    [subTabs, activeSubTabId],
   );
 
-  const layout = useMemo(
-    () => ensureFolderLayout(layoutProp, activeSessionId),
-    [layoutProp, activeSessionId],
+  const layout: FolderLayout = useMemo(
+    () => activeSubTab?.layout ?? { type: "leaf", sessionId: activeSessionId },
+    [activeSubTab, activeSessionId],
   );
 
   const splitMode = countLayoutLeaves(layout) > 1;
@@ -274,6 +301,12 @@ export function TerminalWorkspace({
   );
   const prevLayoutIdsRef = useRef<string[]>([]);
 
+  const activeTab = useMemo(() => {
+    const focused = byId(activeSessionId);
+    if (focused && layoutContainsSession(layout, focused.id)) return focused;
+    return byId(layoutIds[0] ?? "") ?? null;
+  }, [activeSessionId, byId, layout, layoutIds]);
+
   const syncCount = useMemo(
     () => layoutIds.filter((id) => syncIds.has(id)).length,
     [layoutIds, syncIds],
@@ -281,7 +314,6 @@ export function TerminalWorkspace({
   const allSynced =
     splitMode && layoutIds.length > 0 && syncCount === layoutIds.length;
 
-  // 分屏叶子变化时：新窗格默认加入并发；离开布局的移除
   useEffect(() => {
     if (!splitMode) {
       prevLayoutIdsRef.current = [];
@@ -359,7 +391,6 @@ export function TerminalWorkspace({
     const bytes = Array.from(new TextEncoder().encode(data));
     const sync = syncIdsRef.current;
     const list = sessionsRef.current;
-
     const targets = new Set<string>();
     targets.add(sourceId);
     if (sync.size > 0) {
@@ -368,7 +399,6 @@ export function TerminalWorkspace({
         if (tab?.status === "connected") targets.add(id);
       }
     }
-
     for (const id of targets) {
       const tab = list.find((t) => t.id === id);
       if (tab?.status !== "connected") continue;
@@ -399,7 +429,6 @@ export function TerminalWorkspace({
     };
   }, [ctxMenu]);
 
-  // 菜单渲染后按实际尺寸贴边翻转，避免最底窗格被裁切
   useLayoutEffect(() => {
     if (!ctxMenu) return;
     const el = ctxMenuRef.current;
@@ -417,10 +446,7 @@ export function TerminalWorkspace({
     e.preventDefault();
     e.stopPropagation();
     onSelectSession(sessionId);
-    // 先按估算高度上翻，减少首帧闪到窗外（含示意图菜单项）
-    const estH = 180;
-    const estW = 200;
-    const pos = clampCtxMenuPos(e.clientX, e.clientY, estW, estH);
+    const pos = clampCtxMenuPos(e.clientX, e.clientY, 200, 180);
     setCtxMenu({ x: pos.x, y: pos.y, sessionId });
   };
 
@@ -428,21 +454,28 @@ export function TerminalWorkspace({
     setLayoutEpoch((n) => n + 1);
   }, []);
 
-  const renderLayout = (node: FolderLayout): ReactNode => {
+  const renderLayout = (
+    node: FolderLayout,
+    opts: { interactive: boolean; paneSplit: boolean },
+  ): ReactNode => {
     if (node.type === "leaf") {
       const tab = byId(node.sessionId);
       if (!tab) return null;
-      const focused = tab.id === activeSessionId;
-      const visible = workspaceActive;
-      const inSync = syncIds.has(tab.id);
+      const focused = opts.interactive && tab.id === activeSessionId;
+      const visible = workspaceActive && opts.interactive;
+      const inSync = opts.paneSplit && syncIds.has(tab.id);
       return (
         <div
           key={tab.id}
           className={`split-leaf${focused ? " is-focused" : ""}${
             inSync ? " in-sync" : ""
           }`}
-          onMouseDown={() => onSelectSession(tab.id)}
-          onContextMenuCapture={(e) => openCtxMenu(tab.id, e)}
+          onMouseDown={() => {
+            if (opts.interactive) onSelectSession(tab.id);
+          }}
+          onContextMenuCapture={(e) => {
+            if (opts.interactive) openCtxMenu(tab.id, e);
+          }}
         >
           <div className="split-leaf-body">
             <TerminalView
@@ -452,9 +485,25 @@ export function TerminalWorkspace({
               focused={visible && focused && !filesOpen}
               layoutEpoch={layoutEpoch}
               cursorBlink={false}
-              cursorStyle={inSync || focused ? "bar" : "block"}
-              cursorColor={inSync || focused ? CURSOR_COLOR : CURSOR_DIM}
-              onUserInput={(data) => handleUserInput(tab.id, data)}
+              cursorStyle={
+                opts.paneSplit
+                  ? inSync || focused
+                    ? "bar"
+                    : "block"
+                  : "bar"
+              }
+              cursorColor={
+                opts.paneSplit
+                  ? inSync || focused
+                    ? CURSOR_COLOR
+                    : CURSOR_DIM
+                  : CURSOR_COLOR
+              }
+              onUserInput={
+                opts.interactive && opts.paneSplit
+                  ? (data) => handleUserInput(tab.id, data)
+                  : undefined
+              }
               systemNotice={tab.systemNotice}
               homeHint={
                 tab.kind === "local" ? null : guessUnixHome(tab.username)
@@ -492,18 +541,22 @@ export function TerminalWorkspace({
     return (
       <div key={node.id} className="split-branch" style={style}>
         <div className="split-branch-child" style={firstStyle}>
-          {renderLayout(node.first)}
+          {renderLayout(node.first, opts)}
         </div>
-        <SplitSash
-          direction={node.direction}
-          ratio={node.ratio}
-          onRatioChange={(next) => {
-            onSplitRatioChange(node.id, next);
-            bumpLayout();
-          }}
-        />
+        {opts.interactive ? (
+          <SplitSash
+            direction={node.direction}
+            ratio={node.ratio}
+            onRatioChange={(next) => {
+              onSplitRatioChange(node.id, next);
+              bumpLayout();
+            }}
+          />
+        ) : (
+          <div className={`split-sash split-sash-${node.direction}`} />
+        )}
         <div className="split-branch-child" style={secondStyle}>
-          {renderLayout(node.second)}
+          {renderLayout(node.second, opts)}
         </div>
       </div>
     );
@@ -530,107 +583,79 @@ export function TerminalWorkspace({
           />
         ) : null}
 
-        <div
-          className={`terminal-workspace-stages${splitMode ? " split-root" : ""}`}
-        >
-          {splitMode
-            ? renderLayout(layout)
-            : ordered.map((tab) => {
-                const visible = workspaceActive && tab.id === activeSessionId;
-                return (
-                  <div
-                    key={tab.id}
-                    className={`terminal-layer${visible ? " is-visible" : ""}${
-                      visible ? " is-focused" : ""
-                    }`}
-                    onMouseDown={() => {
-                      if (visible) onSelectSession(tab.id);
-                    }}
-                    onContextMenuCapture={(e) => {
-                      if (visible) openCtxMenu(tab.id, e);
-                    }}
-                  >
-                    <div className="terminal-layer-body">
-                      <TerminalView
-                        sessionId={tab.id}
-                        status={tab.status}
-                        visible={visible}
-                        focused={visible && !filesOpen}
-                        layoutEpoch={layoutEpoch}
-                        systemNotice={tab.systemNotice}
-                        homeHint={
-                          tab.kind === "local"
-                            ? null
-                            : guessUnixHome(tab.username)
-                        }
-                        initialCwd={tab.cwd ?? null}
-                        onReconnect={
-                          onReconnectSession
-                            ? () => onReconnectSession(tab.id)
-                            : undefined
-                        }
-                        onCwdChange={
-                          onCwdChange
-                            ? (cwd) => onCwdChange(tab.id, cwd)
-                            : undefined
-                        }
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+        <div className="terminal-workspace-stages split-root">
+          {subTabs.map((st) => {
+            const active = st.id === activeSubTabId;
+            const paneSplit = countLayoutLeaves(st.layout) > 1;
+            return (
+              <div
+                key={st.id}
+                className={`subtab-stage${active ? " is-active" : ""}`}
+                aria-hidden={!active}
+              >
+                {renderLayout(st.layout, {
+                  interactive: active,
+                  paneSplit: active && paneSplit,
+                })}
+              </div>
+            );
+          })}
         </div>
       </div>
 
       {workspaceActive ? (
         <div className="solo-subtab-hit">
           <div className="solo-subtab-chrome">
-            <div className="solo-subtabs" role="tablist" aria-label="同机会话">
-              {ordered.map((tab, index) => {
-                const selected = tab.id === activeSessionId;
-                const inLayout = layoutContainsSession(layout, tab.id);
-                const inSync = splitMode && syncIds.has(tab.id);
-                const name = `连接 ${index + 1}`;
+            <div className="solo-subtabs" role="tablist" aria-label="二级会话">
+              {subTabs.map((st, index) => {
+                const selected = st.id === activeSubTabId;
+                const leafIds = collectLayoutSessionIds(st.layout);
+                const anyError = leafIds.some(
+                  (id) => byId(id)?.status === "error",
+                );
+                const anyConnecting = leafIds.some((id) => {
+                  const s = byId(id)?.status;
+                  return s === "connecting" || s === "reconnecting";
+                });
+                const paneCount = leafIds.length;
+                const name =
+                  paneCount > 1
+                    ? `连接 ${index + 1}（${paneCount} 窗格）`
+                    : `连接 ${index + 1}`;
                 return (
                   <div
-                    key={tab.id}
+                    key={st.id}
                     className={`solo-subtab${selected ? " active" : ""}${
-                      tab.status === "error" ? " error" : ""
-                    }${tab.status === "connecting" ? " connecting" : ""}${
-                      splitMode && !inLayout ? " dimmed" : ""
-                    }${inSync ? " in-sync" : ""}`}
+                      anyError ? " error" : ""
+                    }${anyConnecting ? " connecting" : ""}`}
                   >
                     <button
                       type="button"
                       className="solo-subtab-label"
                       role="tab"
                       aria-selected={selected}
-                      title={
-                        inSync
-                          ? `${name}（已加入并发）`
-                          : splitMode && inLayout
-                            ? `${name}（未加入并发）`
-                            : name
-                      }
+                      title={name}
                       aria-label={name}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onSelectSession(tab.id);
+                        onSelectSubTab(st.id);
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
                     >
                       <IconSession />
                       <span className="solo-subtab-num">{index + 1}</span>
+                      {paneCount > 1 ? (
+                        <span className="solo-subtab-panes">{paneCount}</span>
+                      ) : null}
                     </button>
                     <button
                       type="button"
                       className="solo-subtab-close"
-                      title="关闭此连接"
+                      title="关闭此二级会话"
                       aria-label={`关闭 ${name}`}
-                      disabled={tab.status === "disconnecting"}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onCloseSession(tab.id);
+                        onCloseSubTab(st.id);
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
                     >
@@ -642,8 +667,8 @@ export function TerminalWorkspace({
               <button
                 type="button"
                 className="solo-subtab-add"
-                title="再开一条同机连接"
-                aria-label="再开一条同机连接"
+                title="新建二级会话"
+                aria-label="新建二级会话"
                 onClick={(e) => {
                   e.stopPropagation();
                   onAddSession();
@@ -727,7 +752,7 @@ export function TerminalWorkspace({
               {ctxInSync ? "退出并发输入" : "加入并发输入"}
             </button>
           ) : null}
-          {splitMode || ordered.length > 1 ? (
+          {splitMode ? (
             <button
               type="button"
               role="menuitem"

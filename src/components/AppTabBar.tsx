@@ -251,11 +251,19 @@ export function AppTabBar({
 
           {folders.map((folder) => {
             const selected = folder.id === activeTabId;
-            const count = folder.sessionIds.length;
-            const activeIdx = Math.max(
-              1,
-              folder.sessionIds.indexOf(folder.activeSessionId) + 1,
-            );
+            const subTabs = folder.subTabs?.length
+              ? folder.subTabs
+              : null;
+            const count = subTabs?.length ?? folder.sessionIds.length;
+            const activeIdx = subTabs
+              ? Math.max(
+                  1,
+                  subTabs.findIndex((t) => t.id === folder.activeSubTabId) + 1,
+                )
+              : Math.max(
+                  1,
+                  folder.sessionIds.indexOf(folder.activeSessionId) + 1,
+                );
             const label = hostFolderTabTitle(
               folder.baseTitle,
               count,

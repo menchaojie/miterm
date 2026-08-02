@@ -139,3 +139,25 @@ export function ensureFolderLayout(
 ): FolderLayout {
   return layout ?? leafLayout(activeSessionId);
 }
+
+/** 汇总多个二级 Tab 布局中的全部 session */
+export function collectSubTabsSessionIds(
+  subTabs: { layout: FolderLayout }[],
+): string[] {
+  const ids: string[] = [];
+  for (const tab of subTabs) {
+    ids.push(...collectLayoutSessionIds(tab.layout));
+  }
+  return ids;
+}
+
+/** 在指定二级 Tab 上更新 layout */
+export function mapSubTabLayout<T extends { id: string; layout: FolderLayout }>(
+  subTabs: T[],
+  subTabId: string,
+  map: (layout: FolderLayout) => FolderLayout,
+): T[] {
+  return subTabs.map((t) =>
+    t.id === subTabId ? { ...t, layout: map(t.layout) } : t,
+  );
+}

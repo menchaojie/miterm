@@ -37,14 +37,17 @@ import {
   newFolderId,
   newGroupId,
   newSessionId,
+  newSubTabId,
+  type FolderSubTab,
 } from "./types";
 import {
-  countLayoutLeaves,
+  collectLayoutSessionIds,
+  collectSubTabsSessionIds,
   ensureFolderLayout,
   layoutContainsSession,
   leafLayout,
+  mapSubTabLayout,
   removeSessionFromLayout,
-  replaceLeafSession,
   setSplitRatio,
   splitLeaf,
 } from "./splitLayout";
@@ -56,6 +59,49 @@ const DEFAULT_ROWS = 24;
 
 function syncMaximizedClass(maximized: boolean) {
   document.documentElement.classList.toggle("window-maximized", maximized);
+}
+
+/** 兼容热更新前无 subTabs 的主机夹内存态 */
+function normalizeHostFolder(f: HostFolder): HostFolder {
+  if (f.subTabs && f.subTabs.length > 0) {
+    const sessionIds = collectSubTabsSessionIds(f.subTabs);
+    const activeSub =
+      f.subTabs.find((t) => t.id === f.activeSubTabId) ?? f.subTabs[0];
+    const layoutIds = collectLayoutSessionIds(activeSub.layout);
+    const activeSessionId = layoutIds.includes(f.activeSessionId)
+      ? f.activeSessionId
+      : (layoutIds[0] ?? f.activeSessionId);
+    return {
+      ...f,
+      sessionIds,
+      activeSubTabId: activeSub.id,
+      activeSessionId,
+    };
+  }
+  const layout = ensureFolderLayout(f.layout, f.activeSessionId);
+  const inLayout = new Set(collectLayoutSessionIds(layout));
+  const subTabs: FolderSubTab[] = [{ id: newSubTabId(), layout }];
+  for (const sid of f.sessionIds ?? []) {
+    if (!inLayout.has(sid)) {
+      subTabs.push({ id: newSubTabId(), layout: leafLayout(sid) });
+    }
+  }
+  const activeSub = subTabs[0];
+  const layoutIds = collectLayoutSessionIds(activeSub.layout);
+  return {
+    ...f,
+    subTabs,
+    activeSubTabId: activeSub.id,
+    activeSessionId: layoutIds.includes(f.activeSessionId)
+      ? f.activeSessionId
+      : (layoutIds[0] ?? f.activeSessionId),
+    sessionIds: collectSubTabsSessionIds(subTabs),
+  };
+}
+
+function getActiveSubTab(folder: HostFolder): FolderSubTab {
+  const f = normalizeHostFolder(folder);
+  return f.subTabs.find((t) => t.id === f.activeSubTabId) ?? f.subTabs[0];
 }
 
 function hostBaseTitle(item: SavedHost): string {
@@ -500,24 +546,30 @@ function App() {
   const detachSessionFromFolders = useCallback((sessionId: string) => {
     setFolders((prev) => {
       const next: HostFolder[] = [];
-      for (const f of prev) {
+      for (const raw of prev) {
+        const f = normalizeHostFolder(raw);
         if (!f.sessionIds.includes(sessionId)) {
           next.push(f);
           continue;
         }
-        const sessionIds = f.sessionIds.filter((id) => id !== sessionId);
-        if (sessionIds.length === 0) continue;
-        const baseLayout = ensureFolderLayout(f.layout, f.activeSessionId);
-        const layout = removeSessionFromLayout(baseLayout, sessionId);
-        const activeSessionId =
-          f.activeSessionId === sessionId
-            ? sessionIds[0]
-            : f.activeSessionId;
+        const subTabs: FolderSubTab[] = [];
+        for (const st of f.subTabs) {
+          const layout = removeSessionFromLayout(st.layout, sessionId);
+          if (layout) subTabs.push({ ...st, layout });
+        }
+        if (subTabs.length === 0) continue;
+        const activeSub =
+          subTabs.find((t) => t.id === f.activeSubTabId) ?? subTabs[0];
+        const layoutIds = collectLayoutSessionIds(activeSub.layout);
+        const activeSessionId = layoutIds.includes(f.activeSessionId)
+          ? f.activeSessionId
+          : layoutIds[0];
         next.push({
           ...f,
-          sessionIds,
+          subTabs,
+          activeSubTabId: activeSub.id,
           activeSessionId,
-          layout: layout ?? leafLayout(activeSessionId),
+          sessionIds: collectSubTabsSessionIds(subTabs),
         });
       }
       return next;
@@ -569,15 +621,17 @@ function App() {
       const baseTitle = hostBaseTitle(item);
       const tab = buildSessionTab(item, sessionId, { folderId });
 
+      const subTabId = newSubTabId();
       setFolders((prev) => [
         ...prev,
         {
           id: folderId,
           savedHostId: item.id,
           baseTitle,
+          subTabs: [{ id: subTabId, layout: leafLayout(sessionId) }],
+          activeSubTabId: subTabId,
           sessionIds: [sessionId],
           activeSessionId: sessionId,
-          layout: leafLayout(sessionId),
         },
       ]);
       setSessionTabs((prev) => [...prev, tab]);
@@ -603,6 +657,7 @@ function App() {
     [folders, refreshData, updateTab],
   );
 
+  /** 「+」：新建二级 Tab（单窗格），不拆当前分屏 */
   const addSessionToFolder = useCallback(
     async (folderId: string) => {
       const folder = folders.find((f) => f.id === folderId);
@@ -614,37 +669,24 @@ function App() {
       }
 
       const sessionId = newSessionId();
+      const subTabId = newSubTabId();
       const tab = buildSessionTab(item, sessionId, { folderId });
-      const baseLayout = ensureFolderLayout(
-        folder.layout,
-        folder.activeSessionId,
-      );
-      const inSplit = countLayoutLeaves(baseLayout) > 1;
 
       setSessionTabs((prev) => [...prev, tab]);
       setFolders((prev) =>
-        prev.map((f) => {
-          if (f.id !== folderId) return f;
-          if (inSplit) {
-            // 已分屏：在当前焦点窗格垂直再拆一格
-            return {
-              ...f,
-              sessionIds: [...f.sessionIds, sessionId],
-              activeSessionId: sessionId,
-              layout: splitLeaf(
-                baseLayout,
-                f.activeSessionId,
-                sessionId,
-                "vertical",
-              ),
-            };
-          }
-          // Tab 模式：新连接全屏，布局单叶跟随
+        prev.map((raw) => {
+          if (raw.id !== folderId) return raw;
+          const f = normalizeHostFolder(raw);
+          const subTabs = [
+            ...f.subTabs,
+            { id: subTabId, layout: leafLayout(sessionId) },
+          ];
           return {
             ...f,
-            sessionIds: [...f.sessionIds, sessionId],
+            subTabs,
+            activeSubTabId: subTabId,
             activeSessionId: sessionId,
-            layout: leafLayout(sessionId),
+            sessionIds: collectSubTabsSessionIds(subTabs),
           };
         }),
       );
@@ -670,44 +712,40 @@ function App() {
     [folders, refreshData, savedHosts, updateTab],
   );
 
-  /** 右键分屏：同机新建连接并拆开窗格 */
+  /** 右键分屏：同机新建连接并拆开窗格（不新增二级 Tab） */
   const splitSessionInFolder = useCallback(
     async (folderId: string, sessionId: string, direction: SplitDirection) => {
-      const folder = folders.find((f) => f.id === folderId);
-      if (!folder || !folder.sessionIds.includes(sessionId)) return;
+      const folderRaw = folders.find((f) => f.id === folderId);
+      if (!folderRaw) return;
+      const folder = normalizeHostFolder(folderRaw);
+      if (!folder.sessionIds.includes(sessionId)) return;
       const item = savedHosts.find((h) => h.id === folder.savedHostId);
       if (!item) {
         setListError("该主机已从列表删除，无法再开连接");
         return;
       }
 
+      const activeSub = getActiveSubTab(folder);
+      if (!layoutContainsSession(activeSub.layout, sessionId)) return;
+
       const newId = newSessionId();
       const tab = buildSessionTab(item, newId, { folderId });
-      let baseLayout = ensureFolderLayout(
-        folder.layout,
-        folder.activeSessionId,
-      );
-      if (!layoutContainsSession(baseLayout, sessionId)) {
-        baseLayout =
-          countLayoutLeaves(baseLayout) <= 1
-            ? leafLayout(sessionId)
-            : replaceLeafSession(baseLayout, folder.activeSessionId, sessionId);
-      } else if (countLayoutLeaves(baseLayout) <= 1) {
-        baseLayout = leafLayout(sessionId);
-      }
 
       setSessionTabs((prev) => [...prev, tab]);
       setFolders((prev) =>
-        prev.map((f) =>
-          f.id === folderId
-            ? {
-                ...f,
-                sessionIds: [...f.sessionIds, newId],
-                activeSessionId: newId,
-                layout: splitLeaf(baseLayout, sessionId, newId, direction),
-              }
-            : f,
-        ),
+        prev.map((raw) => {
+          if (raw.id !== folderId) return raw;
+          const f = normalizeHostFolder(raw);
+          const subTabs = mapSubTabLayout(f.subTabs, f.activeSubTabId, (lay) =>
+            splitLeaf(lay, sessionId, newId, direction),
+          );
+          return {
+            ...f,
+            subTabs,
+            activeSessionId: newId,
+            sessionIds: collectSubTabsSessionIds(subTabs),
+          };
+        }),
       );
       setActiveTabId(folderId);
       setListError("");
@@ -858,25 +896,17 @@ function App() {
   const focusSessionInFolder = useCallback(
     (folderId: string, sessionId: string) => {
       setFolders((prev) =>
-        prev.map((f) => {
-          if (f.id !== folderId) return f;
-          if (!f.sessionIds.includes(sessionId)) return f;
-          const layout = ensureFolderLayout(f.layout, f.activeSessionId);
-          if (layoutContainsSession(layout, sessionId)) {
-            return { ...f, activeSessionId: sessionId, layout };
-          }
-          // 未在分屏树中的会话：换入当前焦点叶
-          if (countLayoutLeaves(layout) <= 1) {
-            return {
-              ...f,
-              activeSessionId: sessionId,
-              layout: leafLayout(sessionId),
-            };
-          }
+        prev.map((raw) => {
+          if (raw.id !== folderId) return raw;
+          const f = normalizeHostFolder(raw);
+          const owner = f.subTabs.find((t) =>
+            layoutContainsSession(t.layout, sessionId),
+          );
+          if (!owner) return f;
           return {
             ...f,
+            activeSubTabId: owner.id,
             activeSessionId: sessionId,
-            layout: replaceLeafSession(layout, f.activeSessionId, sessionId),
           };
         }),
       );
@@ -884,12 +914,56 @@ function App() {
     [],
   );
 
+  const focusSubTabInFolder = useCallback(
+    (folderId: string, subTabId: string) => {
+      setFolders((prev) =>
+        prev.map((raw) => {
+          if (raw.id !== folderId) return raw;
+          const f = normalizeHostFolder(raw);
+          const sub = f.subTabs.find((t) => t.id === subTabId);
+          if (!sub) return f;
+          const ids = collectLayoutSessionIds(sub.layout);
+          return {
+            ...f,
+            activeSubTabId: subTabId,
+            activeSessionId: ids.includes(f.activeSessionId)
+              ? f.activeSessionId
+              : (ids[0] ?? f.activeSessionId),
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  /** 关闭整个二级 Tab（断开其布局内全部窗格） */
+  const closeSubTabInFolder = useCallback(
+    (folderId: string, subTabId: string) => {
+      const folderRaw = folders.find((f) => f.id === folderId);
+      if (!folderRaw) return;
+      const folder = normalizeHostFolder(folderRaw);
+      const sub = folder.subTabs.find((t) => t.id === subTabId);
+      if (!sub) return;
+      const ids = collectLayoutSessionIds(sub.layout);
+      for (const id of ids) {
+        closeSession(id);
+      }
+    },
+    [closeSession, folders],
+  );
+
   const changeFolderSplitRatio = useCallback(
     (folderId: string, splitId: string, ratio: number) => {
       setFolders((prev) =>
-        prev.map((f) => {
-          if (f.id !== folderId || !f.layout) return f;
-          return { ...f, layout: setSplitRatio(f.layout, splitId, ratio) };
+        prev.map((raw) => {
+          if (raw.id !== folderId) return raw;
+          const f = normalizeHostFolder(raw);
+          return {
+            ...f,
+            subTabs: mapSubTabLayout(f.subTabs, f.activeSubTabId, (lay) =>
+              setSplitRatio(lay, splitId, ratio),
+            ),
+          };
         }),
       );
     },
@@ -1153,12 +1227,13 @@ function App() {
             return;
           }
           if (activeFolder) {
-            const paneIds = activeFolder.sessionIds.filter((id) =>
-              sessionTabs.some((t) => t.id === id),
-            );
+            const folder = normalizeHostFolder(activeFolder);
+            const paneIds = collectLayoutSessionIds(
+              getActiveSubTab(folder).layout,
+            ).filter((id) => sessionTabs.some((t) => t.id === id));
             if (paneIds.length === 0) return;
-            const cur = paneIds.includes(activeFolder.activeSessionId)
-              ? activeFolder.activeSessionId
+            const cur = paneIds.includes(folder.activeSessionId)
+              ? folder.activeSessionId
               : paneIds[0];
             let idx = paneIds.indexOf(cur);
             if (idx < 0) idx = 0;
@@ -1166,7 +1241,7 @@ function App() {
               kind === "nextPane"
                 ? (idx + 1) % paneIds.length
                 : (idx - 1 + paneIds.length) % paneIds.length;
-            focusSessionInFolder(activeFolder.id, paneIds[nextIdx]);
+            focusSessionInFolder(folder.id, paneIds[nextIdx]);
           }
           return;
         }
@@ -1320,6 +1395,7 @@ function App() {
             const folderSessions = sessionTabs.filter(
               (t) => t.folderId === folder.id,
             );
+            const norm = normalizeHostFolder(folder);
             return (
               <div
                 key={folder.id}
@@ -1328,9 +1404,9 @@ function App() {
               >
                 <TerminalWorkspace
                   sessions={folderSessions}
-                  sessionIds={folder.sessionIds}
-                  activeSessionId={folder.activeSessionId}
-                  layout={folder.layout}
+                  subTabs={norm.subTabs}
+                  activeSubTabId={norm.activeSubTabId}
+                  activeSessionId={norm.activeSessionId}
                   workspaceActive={visible}
                   filesOpen={Boolean(remoteFilesOpenMap[folder.id])}
                   onFilesOpenChange={(open) =>
@@ -1339,8 +1415,14 @@ function App() {
                       [folder.id]: open,
                     }))
                   }
+                  onSelectSubTab={(subTabId) =>
+                    focusSubTabInFolder(folder.id, subTabId)
+                  }
                   onSelectSession={(sessionId) =>
                     focusSessionInFolder(folder.id, sessionId)
+                  }
+                  onCloseSubTab={(subTabId) =>
+                    closeSubTabInFolder(folder.id, subTabId)
                   }
                   onCloseSession={closeSession}
                   onReconnectSession={(sessionId) => {

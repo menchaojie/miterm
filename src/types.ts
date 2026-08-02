@@ -75,15 +75,28 @@ export interface SessionTab {
   cwd?: string | null;
 }
 
-/** 主机夹：一级 Tab，内含多条同机二级会话 */
+/** 主机夹内的二级 Tab：一个 Tab 内可有多窗格分屏 */
+export interface FolderSubTab {
+  id: string;
+  layout: FolderLayout;
+}
+
+/** 主机夹：一级 Tab，内含多个二级 Tab；分屏窗格属于当前二级 Tab */
 export interface HostFolder {
   id: string;
   savedHostId: number;
   /** 不含数量的标题 */
   baseTitle: string;
-  sessionIds: string[];
+  /** 二级 Tab 列表 */
+  subTabs: FolderSubTab[];
+  activeSubTabId: string;
+  /** 当前焦点窗格 session */
   activeSessionId: string;
-  /** 分屏布局；缺省视为单叶（当前激活会话全屏） */
+  /** 夹内全部 session（与各 subTab.layout 同步，便于清理） */
+  sessionIds: string[];
+  /**
+   * @deprecated 仅兼容热更新前内存态；请用 activeSubTab.layout
+   */
   layout?: FolderLayout;
 }
 
@@ -142,6 +155,13 @@ export function newFolderId(): string {
     return `fold-${crypto.randomUUID()}`;
   }
   return `fold-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export function newSubTabId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return `stab-${crypto.randomUUID()}`;
+  }
+  return `stab-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export function hostFolderTabTitle(
