@@ -198,6 +198,8 @@ export function useSshTerminal(
       ) {
         return false;
       }
+      // 默认打开/关闭远程文件；交给窗口级快捷键处理，避免写入 PTY
+      if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyE") return false;
       if (
         ev.ctrlKey &&
         !ev.altKey &&

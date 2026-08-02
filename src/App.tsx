@@ -119,6 +119,10 @@ function App() {
   const [listError, setListError] = useState("");
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 各工作区（主机夹 / 并发组）远程文件侧栏是否打开 */
+  const [remoteFilesOpenMap, setRemoteFilesOpenMap] = useState<
+    Record<string, boolean>
+  >({});
 
   const [savedHosts, setSavedHosts] = useState<SavedHost[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -956,7 +960,10 @@ function App() {
           tag === "TEXTAREA" ||
           tag === "SELECT" ||
           target.isContentEditable;
-        if (isFormField && !inXterm) return;
+        // 普通输入不抢键；Ctrl/Alt/Meta 组合仍走应用快捷键（含远程文件开关）
+        if (isFormField && !inXterm && !(e.ctrlKey || e.altKey || e.metaKey)) {
+          return;
+        }
       }
 
       for (const action of SHORTCUT_ACTIONS) {
@@ -964,6 +971,37 @@ function App() {
         if (!matchShortcut(e, binding)) continue;
 
         const kind = tabIndexForAction(action.id);
+        if (kind === "toggleFiles") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (onHostsTab || e.repeat) return;
+
+          let workspaceId: string | null = null;
+          let sessionId: string | null = null;
+          if (activeFolder) {
+            workspaceId = activeFolder.id;
+            sessionId = activeFolder.activeSessionId;
+          } else if (activeGroup) {
+            workspaceId = activeGroup.id;
+            const focusId = activeGroup.focusedSessionId;
+            sessionId =
+              focusId && activeGroup.sessionIds.includes(focusId)
+                ? focusId
+                : (activeGroup.sessionIds[0] ?? null);
+          }
+          if (!workspaceId || !sessionId) return;
+
+          const tab = sessionTabs.find((t) => t.id === sessionId);
+          if (!tab || tab.kind === "local" || tab.status !== "connected") {
+            return;
+          }
+
+          setRemoteFilesOpenMap((prev) => ({
+            ...prev,
+            [workspaceId!]: !Boolean(prev[workspaceId!]),
+          }));
+          return;
+        }
         if (kind === "prevPane" || kind === "nextPane") {
           e.preventDefault();
           e.stopPropagation();
@@ -1042,6 +1080,7 @@ function App() {
     editorOpen,
     focusSessionInFolder,
     focusSessionInGroup,
+    onHostsTab,
     orderedTabIds,
     selectTab,
     sessionTabs,
@@ -1124,6 +1163,14 @@ function App() {
                   sessions={groupSessions}
                   sessionIds={group.sessionIds}
                   focusedSessionId={group.focusedSessionId}
+                  workspaceActive={visible}
+                  filesOpen={Boolean(remoteFilesOpenMap[group.id])}
+                  onFilesOpenChange={(open) =>
+                    setRemoteFilesOpenMap((prev) => ({
+                      ...prev,
+                      [group.id]: open,
+                    }))
+                  }
                   onFocusSession={(sessionId) =>
                     focusSessionInGroup(group.id, sessionId)
                   }
@@ -1156,6 +1203,13 @@ function App() {
                   sessionIds={folder.sessionIds}
                   activeSessionId={folder.activeSessionId}
                   workspaceActive={visible}
+                  filesOpen={Boolean(remoteFilesOpenMap[folder.id])}
+                  onFilesOpenChange={(open) =>
+                    setRemoteFilesOpenMap((prev) => ({
+                      ...prev,
+                      [folder.id]: open,
+                    }))
+                  }
                   onSelectSession={(sessionId) =>
                     focusSessionInFolder(folder.id, sessionId)
                   }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { TerminalView } from "./TerminalView";
 import { RemoteFilePanel } from "./RemoteFilePanel";
 import type { SessionTab } from "../types";
@@ -11,6 +11,9 @@ interface TerminalWorkspaceProps {
   activeSessionId: string;
   /** 工作区是否在前台（回主机列表 / 切走一级 Tab 时应为 false） */
   workspaceActive?: boolean;
+  /** 远程文件侧栏（由 App 控制，便于全局快捷键） */
+  filesOpen: boolean;
+  onFilesOpenChange: (open: boolean) => void;
   onSelectSession: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
   /** 同主机再开一条连接 */
@@ -59,14 +62,14 @@ export function TerminalWorkspace({
   sessionIds,
   activeSessionId,
   workspaceActive = true,
+  filesOpen,
+  onFilesOpenChange,
   onSelectSession,
   onCloseSession,
   onAddSession,
   onReconnectSession,
   onCwdChange,
 }: TerminalWorkspaceProps) {
-  const [filesOpen, setFilesOpen] = useState(false);
-
   const ordered = sessionIds
     .map((id) => sessions.find((s) => s.id === id))
     .filter((t): t is SessionTab => Boolean(t));
@@ -95,7 +98,7 @@ export function TerminalWorkspace({
             initialPath={filesInitialPath}
             terminalCwd={activeTab.cwd ?? null}
             connected={activeTab.status === "connected"}
-            onClose={() => setFilesOpen(false)}
+            onClose={() => onFilesOpenChange(false)}
           />
         ) : null}
 
@@ -206,12 +209,12 @@ export function TerminalWorkspace({
               <button
                 type="button"
                 className={`solo-subtab-files${filesOpen ? " active" : ""}`}
-                title="远程文件 (SFTP)"
+                title="远程文件 (SFTP) · Ctrl+Shift+E"
                 aria-label="远程文件"
                 aria-pressed={filesOpen}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setFilesOpen((v) => !v);
+                  onFilesOpenChange(!filesOpen);
                 }}
                 onMouseDown={(e) => e.stopPropagation()}
               >

@@ -24,9 +24,24 @@ export type ShortcutActionId =
   | "tab6"
   | "tab7"
   | "tab8"
-  | "tab9";
+  | "tab9"
+  | "toggleRemoteFiles";
 
 export type ShortcutMap = Record<ShortcutActionId, ShortcutBinding>;
+
+/** 设置弹窗顶部分组 Tab */
+export type SettingsTabId =
+  | "connection"
+  | "shortcutsNav"
+  | "shortcutsPane"
+  | "shortcutsFiles";
+
+export const SETTINGS_TABS: { id: SettingsTabId; label: string }[] = [
+  { id: "connection", label: "连接" },
+  { id: "shortcutsNav", label: "Tab 导航" },
+  { id: "shortcutsPane", label: "窗格" },
+  { id: "shortcutsFiles", label: "远程文件" },
+];
 
 export type AppSettings = {
   shortcuts: ShortcutMap;
@@ -83,36 +98,53 @@ export const SHORTCUT_ACTIONS: {
   id: ShortcutActionId;
   label: string;
   hint?: string;
+  /** 设置页所属分组 */
+  tab: SettingsTabId;
 }[] = [
   {
     id: "previousTab",
     label: "上一个会话 Tab",
     hint: "仅在会话 Tab 间循环（不含主机列表）",
+    tab: "shortcutsNav",
   },
   {
     id: "nextTab",
     label: "下一个会话 Tab",
     hint: "仅在会话 Tab 间循环（不含主机列表）",
+    tab: "shortcutsNav",
   },
+  {
+    id: "hostsTab",
+    label: "主机列表",
+    hint: "默认对应第 1 个 Tab（Ctrl+1）",
+    tab: "shortcutsNav",
+  },
+  { id: "tab2", label: "第 2 个 Tab", tab: "shortcutsNav" },
+  { id: "tab3", label: "第 3 个 Tab", tab: "shortcutsNav" },
+  { id: "tab4", label: "第 4 个 Tab", tab: "shortcutsNav" },
+  { id: "tab5", label: "第 5 个 Tab", tab: "shortcutsNav" },
+  { id: "tab6", label: "第 6 个 Tab", tab: "shortcutsNav" },
+  { id: "tab7", label: "第 7 个 Tab", tab: "shortcutsNav" },
+  { id: "tab8", label: "第 8 个 Tab", tab: "shortcutsNav" },
+  { id: "tab9", label: "第 9 个 Tab", tab: "shortcutsNav" },
   {
     id: "previousPane",
     label: "上一窗格 / 二级会话",
     hint: "并发组窗格或主机夹二级会话",
+    tab: "shortcutsPane",
   },
   {
     id: "nextPane",
     label: "下一窗格 / 二级会话",
     hint: "并发组窗格或主机夹二级会话",
+    tab: "shortcutsPane",
   },
-  { id: "hostsTab", label: "主机列表", hint: "默认对应第 1 个 Tab（Ctrl+1）" },
-  { id: "tab2", label: "第 2 个 Tab" },
-  { id: "tab3", label: "第 3 个 Tab" },
-  { id: "tab4", label: "第 4 个 Tab" },
-  { id: "tab5", label: "第 5 个 Tab" },
-  { id: "tab6", label: "第 6 个 Tab" },
-  { id: "tab7", label: "第 7 个 Tab" },
-  { id: "tab8", label: "第 8 个 Tab" },
-  { id: "tab9", label: "第 9 个 Tab" },
+  {
+    id: "toggleRemoteFiles",
+    label: "打开/关闭远程文件",
+    hint: "仅 SSH 会话可用；交替显示侧栏",
+    tab: "shortcutsFiles",
+  },
 ];
 
 const STORAGE_KEY = "miterm.settings.v1";
@@ -145,6 +177,7 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   tab7: binding("7", { ctrl: true }),
   tab8: binding("8", { ctrl: true }),
   tab9: binding("9", { ctrl: true }),
+  toggleRemoteFiles: binding("e", { ctrl: true, shift: true }),
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -251,6 +284,15 @@ export function matchShortcut(
   ) {
     return true;
   }
+  // 字母键：终端焦点下 e.key 偶发不稳定，用物理键码兜底
+  if (
+    binding.key.length === 1 &&
+    binding.key >= "a" &&
+    binding.key <= "z" &&
+    e.code === `Key${binding.key.toUpperCase()}`
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -333,10 +375,10 @@ export function findShortcutConflict(
   return null;
 }
 
-/** Tab / 窗格动作分类 */
+/** Tab / 窗格 / 面板动作分类 */
 export function tabIndexForAction(
   action: ShortcutActionId,
-): number | "prev" | "next" | "prevPane" | "nextPane" {
+): number | "prev" | "next" | "prevPane" | "nextPane" | "toggleFiles" {
   switch (action) {
     case "previousTab":
       return "prev";
@@ -346,6 +388,8 @@ export function tabIndexForAction(
       return "prevPane";
     case "nextPane":
       return "nextPane";
+    case "toggleRemoteFiles":
+      return "toggleFiles";
     case "hostsTab":
       return 0;
     case "tab2":

@@ -20,6 +20,11 @@ interface ConcurrentWorkspaceProps {
   /** 格子顺序（与连接顺序一致） */
   sessionIds: string[];
   focusedSessionId: string | null;
+  /** 工作区是否在前台 */
+  workspaceActive?: boolean;
+  /** 远程文件侧栏（由 App 控制，便于全局快捷键） */
+  filesOpen: boolean;
+  onFilesOpenChange: (open: boolean) => void;
   onFocusSession: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
   onReconnectSession?: (sessionId: string) => void;
@@ -72,6 +77,9 @@ export function ConcurrentWorkspace({
   sessions,
   sessionIds,
   focusedSessionId,
+  workspaceActive = true,
+  filesOpen,
+  onFilesOpenChange,
   onFocusSession,
   onCloseSession,
   onReconnectSession,
@@ -81,7 +89,6 @@ export function ConcurrentWorkspace({
   const gridRef = useRef<HTMLDivElement>(null);
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [syncIds, setSyncIds] = useState<Set<string>>(() => new Set());
-  const [filesOpen, setFilesOpen] = useState(false);
   const syncIdsRef = useRef(syncIds);
   const sessionsRef = useRef(sessions);
   syncIdsRef.current = syncIds;
@@ -224,14 +231,14 @@ export function ConcurrentWorkspace({
   return (
     <div className="concurrent-workspace">
       <div className="concurrent-workspace-main">
-      {filesOpen && focusedTab && canBrowseFiles ? (
+      {workspaceActive && filesOpen && focusedTab && canBrowseFiles ? (
         <RemoteFilePanel
           key={focusedTab.id}
           sessionId={focusedTab.id}
           initialPath={filesInitialPath}
           terminalCwd={focusedTab.cwd ?? null}
           connected={focusedTab.status === "connected"}
-          onClose={() => setFilesOpen(false)}
+          onClose={() => onFilesOpenChange(false)}
         />
       ) : null}
       <div
@@ -354,7 +361,7 @@ export function ConcurrentWorkspace({
                         onClick={(e) => {
                           e.stopPropagation();
                           onFocusSession(tab.id);
-                          setFilesOpen((v) => (focused ? !v : true));
+                          onFilesOpenChange(focused ? !filesOpen : true);
                         }}
                         onMouseDown={(e) => e.stopPropagation()}
                       >
