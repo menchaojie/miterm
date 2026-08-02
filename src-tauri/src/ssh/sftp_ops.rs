@@ -64,6 +64,37 @@ pub struct SftpUploadParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SftpUploadPathsParams {
+    pub session_id: String,
+    pub remote_dir: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpClassifyPathsParams {
+    pub paths: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifiedLocalPath {
+    pub path: String,
+    /// file | dir | other
+    pub kind: String,
+    pub name: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifyLocalPathsResult {
+    pub files: Vec<ClassifiedLocalPath>,
+    pub dirs: Vec<ClassifiedLocalPath>,
+    pub skipped: Vec<ClassifiedLocalPath>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SftpDownloadParams {
     pub session_id: String,
     pub remote_path: String,
@@ -905,6 +936,90 @@ pub fn pick_upload_folder() -> Result<Option<PathBuf>, String> {
     Ok(rfd::FileDialog::new()
         .set_title("选择要上传的文件夹")
         .pick_folder())
+}
+
+pub fn classify_local_paths(paths: &[String]) -> ClassifyLocalPathsResult {
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
+    let mut skipped = Vec::new();
+    for raw in paths {
+        let p = PathBuf::from(raw);
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| raw.clone());
+        let meta = match fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(_) => {
+                skipped.push(ClassifiedLocalPath {
+                    path: raw.clone(),
+                    kind: "other".into(),
+                    name,
+                });
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            skipped.push(ClassifiedLocalPath {
+                path: raw.clone(),
+                kind: "other".into(),
+                name,
+            });
+            continue;
+        }
+        if meta.is_file() {
+            files.push(ClassifiedLocalPath {
+                path: raw.clone(),
+                kind: "file".into(),
+                name,
+            });
+        } else if meta.is_dir() {
+            dirs.push(ClassifiedLocalPath {
+                path: raw.clone(),
+                kind: "dir".into(),
+                name,
+            });
+        } else {
+            skipped.push(ClassifiedLocalPath {
+                path: raw.clone(),
+                kind: "other".into(),
+                name,
+            });
+        }
+    }
+    ClassifyLocalPathsResult {
+        files,
+        dirs,
+        skipped,
+    }
+}
+
+/// 按本机路径列表上传（供拖放确认后调用；跳过符号链接等）
+pub fn upload_paths(
+    app: &AppHandle,
+    session_id: &str,
+    side: &SftpSideSession,
+    remote_dir: &str,
+    paths: &[String],
+) -> Result<String, String> {
+    let classified = classify_local_paths(paths);
+    if classified.files.is_empty() && classified.dirs.is_empty() {
+        return Err("没有可上传的文件或文件夹".into());
+    }
+
+    let remote_dir = normalize_remote_dir(remote_dir);
+    let mut last = remote_dir.clone();
+
+    for f in &classified.files {
+        let local = PathBuf::from(&f.path);
+        last = upload_file(app, session_id, side, &remote_dir, &local)?;
+    }
+    for d in &classified.dirs {
+        let local = PathBuf::from(&d.path);
+        last = upload_dir(app, session_id, side, &remote_dir, &local)?;
+    }
+
+    Ok(last)
 }
 
 pub fn file_name_of(remote_path: &str) -> String {

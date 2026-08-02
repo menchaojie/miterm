@@ -10,6 +10,8 @@ commands.allow = [
   "sftp_list",
   "sftp_upload",
   "sftp_upload_dir",
+  "sftp_classify_local_paths",
+  "sftp_upload_paths",
   "sftp_download",
   "sftp_download_dir"
 ]

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isRestorableCwd } from "../cwd";
 
 export interface SftpEntry {
@@ -28,6 +30,25 @@ interface SftpProgressEvent {
   fileCount?: number;
   done: boolean;
   error?: string | null;
+}
+
+interface ClassifiedLocalPath {
+  path: string;
+  kind: string;
+  name: string;
+}
+
+interface ClassifyLocalPathsResult {
+  files: ClassifiedLocalPath[];
+  dirs: ClassifiedLocalPath[];
+  skipped: ClassifiedLocalPath[];
+}
+
+interface PendingUpload {
+  paths: string[];
+  files: ClassifiedLocalPath[];
+  dirs: ClassifiedLocalPath[];
+  skipped: ClassifiedLocalPath[];
 }
 
 interface RemoteFilePanelProps {
@@ -191,10 +212,20 @@ export function RemoteFilePanel({
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<SftpProgressEvent | null>(null);
   const [followTerminal, setFollowTerminal] = useState(loadFollowTerminal);
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(
+    null,
+  );
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const dropZoneRef = useRef<HTMLDivElement | null>(null);
+  const uploadMenuRef = useRef<HTMLDivElement | null>(null);
   const rootPathRef = useRef(rootPath);
   rootPathRef.current = rootPath;
   const bootPathRef = useRef(bootPath);
+  const uploadDirRef = useRef(bootPath);
+  const connectedRef = useRef(connected);
+  const busyRef = useRef(false);
 
   const uploadDir = useMemo(() => {
     if (selectedPath === rootPath) return rootPath;
@@ -414,15 +445,21 @@ export function RemoteFilePanel({
     void loadRoot(pathInput.trim() || "/");
   };
 
+  uploadDirRef.current = uploadDir;
+  connectedRef.current = connected;
+  busyRef.current = busy;
+
   const afterUpload = async (remote: string | null) => {
     if (!remote) return;
-    await refreshNode(uploadDir);
-    if (uploadDir !== rootPath && !expanded.has(uploadDir)) {
-      setExpanded((prev) => new Set(prev).add(uploadDir));
+    await refreshNode(uploadDirRef.current);
+    const dir = uploadDirRef.current;
+    if (dir !== rootPathRef.current) {
+      setExpanded((prev) => new Set(prev).add(dir));
     }
   };
 
-  const onUpload = async () => {
+  const onUploadFile = async () => {
+    setUploadMenuOpen(false);
     if (!connected || busy) return;
     setBusy(true);
     setError("");
@@ -439,6 +476,7 @@ export function RemoteFilePanel({
   };
 
   const onUploadDir = async () => {
+    setUploadMenuOpen(false);
     if (!connected || busy) return;
     setBusy(true);
     setError("");
@@ -453,6 +491,125 @@ export function RemoteFilePanel({
       setBusy(false);
     }
   };
+
+  const openDropConfirm = useCallback(async (paths: string[]) => {
+    if (!paths.length) return;
+    try {
+      const classified = await invoke<ClassifyLocalPathsResult>(
+        "sftp_classify_local_paths",
+        { params: { paths } },
+      );
+      if (
+        classified.files.length === 0 &&
+        classified.dirs.length === 0
+      ) {
+        setError("没有可上传的文件或文件夹（已跳过无效项/符号链接）");
+        return;
+      }
+      setPendingUpload({
+        paths: [
+          ...classified.files.map((f) => f.path),
+          ...classified.dirs.map((d) => d.path),
+        ],
+        files: classified.files,
+        dirs: classified.dirs,
+        skipped: classified.skipped,
+      });
+      setError("");
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const confirmDropUpload = async () => {
+    if (!pendingUpload || !connected || busy) return;
+    const paths = pendingUpload.paths;
+    setPendingUpload(null);
+    setBusy(true);
+    setError("");
+    try {
+      const remote = await invoke<string>("sftp_upload_paths", {
+        params: {
+          sessionId,
+          remoteDir: uploadDir,
+          paths,
+        },
+      });
+      await afterUpload(remote);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pointInDropZone = useCallback((clientX: number, clientY: number) => {
+    const el = dropZoneRef.current;
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return (
+      clientX >= r.left &&
+      clientX <= r.right &&
+      clientY >= r.top &&
+      clientY <= r.bottom
+    );
+  }, []);
+
+  // Tauri 原生拖放：仅当落点在上传区内才处理
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const webview = getCurrentWebview();
+        const win = getCurrentWindow();
+        const fn = await webview.onDragDropEvent(async (event) => {
+          if (cancelled) return;
+          if (!connectedRef.current || busyRef.current) {
+            setDropActive(false);
+            return;
+          }
+          const payload = event.payload;
+          if (payload.type === "leave") {
+            setDropActive(false);
+            return;
+          }
+          const scale = await win.scaleFactor();
+          const logical = payload.position.toLogical(scale);
+          const inside = pointInDropZone(logical.x, logical.y);
+          if (payload.type === "enter" || payload.type === "over") {
+            setDropActive(inside);
+            return;
+          }
+          if (payload.type === "drop") {
+            setDropActive(false);
+            if (!inside) return;
+            await openDropConfirm(payload.paths);
+          }
+        });
+        if (!cancelled) unlisten = fn;
+        else fn();
+      } catch {
+        /* 非 Tauri 环境忽略 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [openDropConfirm, pointInDropZone]);
+
+  useEffect(() => {
+    if (!uploadMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = uploadMenuRef.current;
+      if (el && !el.contains(e.target as Node)) {
+        setUploadMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [uploadMenuOpen]);
 
   const onDownload = async (entry: SftpEntry) => {
     if (!connected || busy) return;
@@ -664,29 +821,109 @@ export function RemoteFilePanel({
         </button>
       </form>
 
-      <div className="remote-file-actions">
-        <button
-          type="button"
-          className="remote-file-action-btn"
-          disabled={!connected || busy}
-          title={`上传文件到 ${uploadDir}`}
-          onClick={() => void onUpload()}
-        >
-          上传文件…
-        </button>
-        <button
-          type="button"
-          className="remote-file-action-btn"
-          disabled={!connected || busy}
-          title={`上传文件夹到 ${uploadDir}（将创建同名目录）`}
-          onClick={() => void onUploadDir()}
-        >
-          上传文件夹…
-        </button>
-        <span className="remote-file-upload-hint" title={uploadDir}>
-          → {basename(uploadDir)}
-        </span>
+      <div
+        ref={dropZoneRef}
+        className={`remote-file-dropzone${dropActive ? " is-dragover" : ""}${
+          !connected || busy ? " is-disabled" : ""
+        }`}
+      >
+        <div className="remote-file-actions">
+          <div className="remote-file-upload-menu" ref={uploadMenuRef}>
+            <button
+              type="button"
+              className="remote-file-action-btn"
+              disabled={!connected || busy}
+              title={`上传到 ${uploadDir}`}
+              aria-expanded={uploadMenuOpen}
+              onClick={() => setUploadMenuOpen((v) => !v)}
+            >
+              上传…
+            </button>
+            {uploadMenuOpen ? (
+              <div className="remote-file-upload-dropdown" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!connected || busy}
+                  onClick={() => void onUploadFile()}
+                >
+                  上传文件…
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!connected || busy}
+                  onClick={() => void onUploadDir()}
+                >
+                  上传文件夹…
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <span className="remote-file-upload-hint" title={uploadDir}>
+            → {basename(uploadDir)}
+          </span>
+        </div>
+        <div className="remote-file-drop-hint">
+          {dropActive
+            ? "松开以上传…"
+            : "或将文件 / 文件夹拖到此处"}
+        </div>
       </div>
+
+      {pendingUpload ? (
+        <div className="remote-file-confirm" role="dialog" aria-label="确认上传">
+          <div className="remote-file-confirm-title">确认上传</div>
+          <div className="remote-file-confirm-body">
+            目标：<code title={uploadDir}>{uploadDir}</code>
+            <br />
+            {pendingUpload.files.length} 个文件
+            {pendingUpload.dirs.length > 0
+              ? ` · ${pendingUpload.dirs.length} 个文件夹`
+              : ""}
+            {pendingUpload.skipped.length > 0
+              ? ` · 跳过 ${pendingUpload.skipped.length} 项`
+              : ""}
+          </div>
+          <ul className="remote-file-confirm-list">
+            {[...pendingUpload.dirs, ...pendingUpload.files]
+              .slice(0, 12)
+              .map((item) => (
+                <li key={item.path} title={item.path}>
+                  {item.kind === "dir" ? "[夹] " : "[文件] "}
+                  {item.name}
+                </li>
+              ))}
+            {pendingUpload.files.length + pendingUpload.dirs.length > 12 ? (
+              <li>
+                …另有{" "}
+                {pendingUpload.files.length +
+                  pendingUpload.dirs.length -
+                  12}{" "}
+                项
+              </li>
+            ) : null}
+          </ul>
+          <div className="remote-file-confirm-actions">
+            <button
+              type="button"
+              className="remote-file-action-btn"
+              disabled={busy}
+              onClick={() => setPendingUpload(null)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="remote-file-action-btn remote-file-action-btn-primary"
+              disabled={!connected || busy}
+              onClick={() => void confirmDropUpload()}
+            >
+              确定上传
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {progress ? (
         <div className="remote-file-progress">

@@ -11,7 +11,8 @@ use db::{
 };
 use local::{LocalConnectParams, LocalSessionManager};
 use ssh::{
-    ConnectParams, SftpDownloadParams, SftpListParams, SftpListResult, SftpUploadParams,
+    classify_local_paths, ClassifyLocalPathsResult, ConnectParams, SftpClassifyPathsParams,
+    SftpDownloadParams, SftpListParams, SftpListResult, SftpUploadParams, SftpUploadPathsParams,
     SshSessionManager,
 };
 use tauri::{AppHandle, Manager, State, Theme, image::Image};
@@ -178,6 +179,27 @@ async fn sftp_upload_dir(
 }
 
 #[tauri::command]
+async fn sftp_classify_local_paths(
+    params: SftpClassifyPathsParams,
+) -> Result<ClassifyLocalPathsResult, String> {
+    Ok(classify_local_paths(&params.paths))
+}
+
+#[tauri::command]
+async fn sftp_upload_paths(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: SftpUploadPathsParams,
+) -> Result<String, String> {
+    let ssh = Arc::clone(&state.ssh);
+    tokio::task::spawn_blocking(move || {
+        ssh.sftp_upload_paths(&app, &params.session_id, &params.remote_dir, &params.paths)
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
 async fn list_saved_hosts(state: State<'_, AppState>) -> Result<Vec<SavedHost>, String> {
     let hosts = Arc::clone(&state.hosts);
     tokio::task::spawn_blocking(move || hosts.list())
@@ -295,6 +317,8 @@ pub fn run() {
             sftp_list,
             sftp_upload,
             sftp_upload_dir,
+            sftp_classify_local_paths,
+            sftp_upload_paths,
             sftp_download,
             sftp_download_dir,
             list_saved_hosts,
