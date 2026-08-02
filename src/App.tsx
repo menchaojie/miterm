@@ -27,6 +27,7 @@ import type {
   HostFolder,
   SavedHost,
   SessionTab,
+  SplitDirection,
   SshCloseReason,
   SshClosedEvent,
 } from "./types";
@@ -37,6 +38,16 @@ import {
   newGroupId,
   newSessionId,
 } from "./types";
+import {
+  countLayoutLeaves,
+  ensureFolderLayout,
+  layoutContainsSession,
+  leafLayout,
+  removeSessionFromLayout,
+  replaceLeafSession,
+  setSplitRatio,
+  splitLeaf,
+} from "./splitLayout";
 import { isRestorableCwd, shellSingleQuote, guessUnixHome } from "./cwd";
 import "./App.css";
 
@@ -496,13 +507,17 @@ function App() {
         }
         const sessionIds = f.sessionIds.filter((id) => id !== sessionId);
         if (sessionIds.length === 0) continue;
+        const baseLayout = ensureFolderLayout(f.layout, f.activeSessionId);
+        const layout = removeSessionFromLayout(baseLayout, sessionId);
+        const activeSessionId =
+          f.activeSessionId === sessionId
+            ? sessionIds[0]
+            : f.activeSessionId;
         next.push({
           ...f,
           sessionIds,
-          activeSessionId:
-            f.activeSessionId === sessionId
-              ? sessionIds[0]
-              : f.activeSessionId,
+          activeSessionId,
+          layout: layout ?? leafLayout(activeSessionId),
         });
       }
       return next;
@@ -562,6 +577,7 @@ function App() {
           baseTitle,
           sessionIds: [sessionId],
           activeSessionId: sessionId,
+          layout: leafLayout(sessionId),
         },
       ]);
       setSessionTabs((prev) => [...prev, tab]);
@@ -599,17 +615,38 @@ function App() {
 
       const sessionId = newSessionId();
       const tab = buildSessionTab(item, sessionId, { folderId });
+      const baseLayout = ensureFolderLayout(
+        folder.layout,
+        folder.activeSessionId,
+      );
+      const inSplit = countLayoutLeaves(baseLayout) > 1;
+
       setSessionTabs((prev) => [...prev, tab]);
       setFolders((prev) =>
-        prev.map((f) =>
-          f.id === folderId
-            ? {
-                ...f,
-                sessionIds: [...f.sessionIds, sessionId],
-                activeSessionId: sessionId,
-              }
-            : f,
-        ),
+        prev.map((f) => {
+          if (f.id !== folderId) return f;
+          if (inSplit) {
+            // 已分屏：在当前焦点窗格垂直再拆一格
+            return {
+              ...f,
+              sessionIds: [...f.sessionIds, sessionId],
+              activeSessionId: sessionId,
+              layout: splitLeaf(
+                baseLayout,
+                f.activeSessionId,
+                sessionId,
+                "vertical",
+              ),
+            };
+          }
+          // Tab 模式：新连接全屏，布局单叶跟随
+          return {
+            ...f,
+            sessionIds: [...f.sessionIds, sessionId],
+            activeSessionId: sessionId,
+            layout: leafLayout(sessionId),
+          };
+        }),
       );
       setActiveTabId(folderId);
       setListError("");
@@ -625,6 +662,67 @@ function App() {
         }
       } catch (e) {
         updateTab(sessionId, {
+          status: "error",
+          errorMessage: String(e),
+        });
+      }
+    },
+    [folders, refreshData, savedHosts, updateTab],
+  );
+
+  /** 右键分屏：同机新建连接并拆开窗格 */
+  const splitSessionInFolder = useCallback(
+    async (folderId: string, sessionId: string, direction: SplitDirection) => {
+      const folder = folders.find((f) => f.id === folderId);
+      if (!folder || !folder.sessionIds.includes(sessionId)) return;
+      const item = savedHosts.find((h) => h.id === folder.savedHostId);
+      if (!item) {
+        setListError("该主机已从列表删除，无法再开连接");
+        return;
+      }
+
+      const newId = newSessionId();
+      const tab = buildSessionTab(item, newId, { folderId });
+      let baseLayout = ensureFolderLayout(
+        folder.layout,
+        folder.activeSessionId,
+      );
+      if (!layoutContainsSession(baseLayout, sessionId)) {
+        baseLayout =
+          countLayoutLeaves(baseLayout) <= 1
+            ? leafLayout(sessionId)
+            : replaceLeafSession(baseLayout, folder.activeSessionId, sessionId);
+      } else if (countLayoutLeaves(baseLayout) <= 1) {
+        baseLayout = leafLayout(sessionId);
+      }
+
+      setSessionTabs((prev) => [...prev, tab]);
+      setFolders((prev) =>
+        prev.map((f) =>
+          f.id === folderId
+            ? {
+                ...f,
+                sessionIds: [...f.sessionIds, newId],
+                activeSessionId: newId,
+                layout: splitLeaf(baseLayout, sessionId, newId, direction),
+              }
+            : f,
+        ),
+      );
+      setActiveTabId(folderId);
+      setListError("");
+
+      try {
+        await invokeConnect(item, newId);
+        updateTab(newId, { status: "connected", errorMessage: "" });
+        try {
+          await invoke("touch_saved_host", { id: item.id });
+          await refreshData();
+        } catch (e) {
+          console.error(e);
+        }
+      } catch (e) {
+        updateTab(newId, {
           status: "error",
           errorMessage: String(e),
         });
@@ -760,9 +858,39 @@ function App() {
   const focusSessionInFolder = useCallback(
     (folderId: string, sessionId: string) => {
       setFolders((prev) =>
-        prev.map((f) =>
-          f.id === folderId ? { ...f, activeSessionId: sessionId } : f,
-        ),
+        prev.map((f) => {
+          if (f.id !== folderId) return f;
+          if (!f.sessionIds.includes(sessionId)) return f;
+          const layout = ensureFolderLayout(f.layout, f.activeSessionId);
+          if (layoutContainsSession(layout, sessionId)) {
+            return { ...f, activeSessionId: sessionId, layout };
+          }
+          // 未在分屏树中的会话：换入当前焦点叶
+          if (countLayoutLeaves(layout) <= 1) {
+            return {
+              ...f,
+              activeSessionId: sessionId,
+              layout: leafLayout(sessionId),
+            };
+          }
+          return {
+            ...f,
+            activeSessionId: sessionId,
+            layout: replaceLeafSession(layout, f.activeSessionId, sessionId),
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  const changeFolderSplitRatio = useCallback(
+    (folderId: string, splitId: string, ratio: number) => {
+      setFolders((prev) =>
+        prev.map((f) => {
+          if (f.id !== folderId || !f.layout) return f;
+          return { ...f, layout: setSplitRatio(f.layout, splitId, ratio) };
+        }),
       );
     },
     [],
@@ -1202,6 +1330,7 @@ function App() {
                   sessions={folderSessions}
                   sessionIds={folder.sessionIds}
                   activeSessionId={folder.activeSessionId}
+                  layout={folder.layout}
                   workspaceActive={visible}
                   filesOpen={Boolean(remoteFilesOpenMap[folder.id])}
                   onFilesOpenChange={(open) =>
@@ -1220,6 +1349,12 @@ function App() {
                   onCwdChange={handleCwdChange}
                   onAddSession={() => {
                     void addSessionToFolder(folder.id);
+                  }}
+                  onSplitSession={(sessionId, direction) => {
+                    void splitSessionInFolder(folder.id, sessionId, direction);
+                  }}
+                  onSplitRatioChange={(splitId, ratio) => {
+                    changeFolderSplitRatio(folder.id, splitId, ratio);
                   }}
                 />
               </div>

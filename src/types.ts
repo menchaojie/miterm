@@ -1,3 +1,7 @@
+import type { FolderLayout } from "./splitLayout";
+
+export type { FolderLayout, SplitDirection } from "./splitLayout";
+
 export type ConnectionStatus =
   | "idle"
   | "connecting"
@@ -79,6 +83,8 @@ export interface HostFolder {
   baseTitle: string;
   sessionIds: string[];
   activeSessionId: string;
+  /** 分屏布局；缺省视为单叶（当前激活会话全屏） */
+  layout?: FolderLayout;
 }
 
 /** 并发会话 Tab（一组多主机同屏格子） */
