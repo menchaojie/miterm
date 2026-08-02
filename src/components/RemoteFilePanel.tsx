@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { isRestorableCwd } from "../cwd";
 
 export interface SftpEntry {
   name: string;
@@ -31,17 +32,23 @@ interface SftpProgressEvent {
 
 interface RemoteFilePanelProps {
   sessionId: string;
-  /** 打开时默认目录（一般为会话 cwd） */
+  /** 打开面板时的默认目录（仅挂载时用一次） */
   initialPath: string;
+  /** 终端当前 cwd；仅「跟随终端」开启时用于同步 */
+  terminalCwd?: string | null;
   connected: boolean;
   onClose: () => void;
 }
 
 const WIDTH_KEY = "miterm.remoteFilePanelWidth";
 const LEGACY_WIDTH_KEY = "miterminal.remoteFilePanelWidth";
+/** v2：默认开启跟随；忽略无效 cwd，由终端侧过滤误报的 ~/ */
+const FOLLOW_KEY = "miterm.remoteFileFollowTerminal.v2";
 const DEFAULT_WIDTH = 340;
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 720;
+/** 跟随终端时短防抖，合并连发 cwd 更新 */
+const FOLLOW_DEBOUNCE_MS = 200;
 
 function loadPanelWidth(): number {
   try {
@@ -65,6 +72,24 @@ function savePanelWidth(w: number) {
   try {
     localStorage.setItem(WIDTH_KEY, String(Math.round(w)));
     localStorage.removeItem(LEGACY_WIDTH_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadFollowTerminal(): boolean {
+  try {
+    const v = localStorage.getItem(FOLLOW_KEY);
+    if (v == null) return true;
+    return v === "1";
+  } catch {
+    return true;
+  }
+}
+
+function saveFollowTerminal(on: boolean) {
+  try {
+    localStorage.setItem(FOLLOW_KEY, on ? "1" : "0");
   } catch {
     /* ignore */
   }
@@ -146,24 +171,30 @@ type ChildrenCache = Record<string, SftpEntry[]>;
 export function RemoteFilePanel({
   sessionId,
   initialPath,
+  terminalCwd = null,
   connected,
   onClose,
 }: RemoteFilePanelProps) {
+  const bootPath = initialPath || "/";
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth);
-  const [rootPath, setRootPath] = useState(initialPath || "/");
-  const [pathInput, setPathInput] = useState(initialPath || "/");
+  const [rootPath, setRootPath] = useState(bootPath);
+  const [pathInput, setPathInput] = useState(bootPath);
   const [rootEntries, setRootEntries] = useState<SftpEntry[]>([]);
   const [childrenCache, setChildrenCache] = useState<ChildrenCache>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(
     () => new Set(),
   );
-  const [selectedPath, setSelectedPath] = useState(initialPath || "/");
+  const [selectedPath, setSelectedPath] = useState(bootPath);
   const [bootLoading, setBootLoading] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<SftpProgressEvent | null>(null);
+  const [followTerminal, setFollowTerminal] = useState(loadFollowTerminal);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const rootPathRef = useRef(rootPath);
+  rootPathRef.current = rootPath;
+  const bootPathRef = useRef(bootPath);
 
   const uploadDir = useMemo(() => {
     if (selectedPath === rootPath) return rootPath;
@@ -265,9 +296,39 @@ export function RemoteFilePanel({
     [connected, listDir],
   );
 
+  // 挂载 / 切换会话：打开时的目录
   useEffect(() => {
-    void loadRoot(initialPath || "/");
-  }, [initialPath, loadRoot, sessionId]);
+    void loadRoot(bootPathRef.current || "/");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 故意不依赖 initialPath
+  }, [sessionId, loadRoot]);
+
+  // 默认跟随终端 cwd：只接受有效绝对路径；null/抖动无效值不回落到 ~/
+  useEffect(() => {
+    if (!followTerminal || !connected) return;
+    if (!isRestorableCwd(terminalCwd)) return;
+    if (terminalCwd === rootPathRef.current) return;
+    const target = terminalCwd;
+    const timer = window.setTimeout(() => {
+      if (!isRestorableCwd(target)) return;
+      if (target === rootPathRef.current) return;
+      void loadRoot(target);
+    }, FOLLOW_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [followTerminal, terminalCwd, connected, loadRoot]);
+
+  const toggleFollowTerminal = () => {
+    const next = !followTerminal;
+    setFollowTerminal(next);
+    saveFollowTerminal(next);
+    if (next && isRestorableCwd(terminalCwd)) {
+      void loadRoot(terminalCwd);
+    }
+  };
+
+  const goToTerminalCwd = () => {
+    if (!isRestorableCwd(terminalCwd)) return;
+    void loadRoot(terminalCwd);
+  };
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -554,6 +615,33 @@ export function RemoteFilePanel({
           onClick={() => void refreshNode(rootPath)}
         >
           ↻
+        </button>
+        <button
+          type="button"
+          className="remote-file-icon-btn"
+          title={
+            isRestorableCwd(terminalCwd)
+              ? `转到终端目录：${terminalCwd}`
+              : "终端目录未知"
+          }
+          disabled={!connected || bootLoading || !isRestorableCwd(terminalCwd)}
+          onClick={goToTerminalCwd}
+        >
+          ⌖
+        </button>
+        <button
+          type="button"
+          className={`remote-file-icon-btn${followTerminal ? " is-active" : ""}`}
+          title={
+            followTerminal
+              ? "已开启：跟随终端目录（再点可关闭以便自由浏览）"
+              : "跟随终端目录（关闭后不再随 cd 变化）"
+          }
+          aria-pressed={followTerminal}
+          disabled={!connected}
+          onClick={toggleFollowTerminal}
+        >
+          ⇄
         </button>
       </form>
 

@@ -229,6 +229,7 @@ export function ConcurrentWorkspace({
           key={focusedTab.id}
           sessionId={focusedTab.id}
           initialPath={filesInitialPath}
+          terminalCwd={focusedTab.cwd ?? null}
           connected={focusedTab.status === "connected"}
           onClose={() => setFilesOpen(false)}
         />

@@ -62,8 +62,28 @@ export function useSshTerminal(
   onCwdChangeRef.current = onCwdChange;
   homeHintRef.current = homeHint ?? null;
 
-  const reportCwd = (next: string | null) => {
+  /**
+   * source:
+   * - cd / osc7：可信，始终采纳
+   * - prompt：提示符猜测；若从「非家目录」突然变成家目录则忽略（敲命令时易误报 ~）
+   * - null：不清除已有 cwd，避免面板回落到 ~/
+   */
+  const reportCwd = (
+    next: string | null,
+    source: "cd" | "osc7" | "prompt" = "osc7",
+  ) => {
+    if (next == null) return;
     if (next === cwdRef.current) return;
+    const home = homeHintRef.current;
+    if (
+      source === "prompt" &&
+      home &&
+      next === home &&
+      cwdRef.current &&
+      cwdRef.current !== home
+    ) {
+      return;
+    }
     cwdRef.current = next;
     onCwdChangeRef.current?.(next);
   };
@@ -74,6 +94,7 @@ export function useSshTerminal(
       if (usedTab) continue;
       reportCwd(
         cwdAfterCommand(cwdRef.current, line, homeHintRef.current),
+        "cd",
       );
     }
   };
@@ -82,14 +103,14 @@ export function useSshTerminal(
     const text = new TextDecoder().decode(Uint8Array.from(bytes));
     for (const payload of extractOsc7Payloads(text)) {
       const path = parseOsc7Path(payload);
-      if (path) reportCwd(path);
+      if (path) reportCwd(path, "osc7");
     }
     promptScanBufRef.current = (promptScanBufRef.current + text).slice(-4096);
     const fromPrompt = cwdFromPromptOutput(
       promptScanBufRef.current,
       homeHintRef.current,
     );
-    if (fromPrompt) reportCwd(fromPrompt);
+    if (fromPrompt) reportCwd(fromPrompt, "prompt");
   };
 
   /** 连接中 / 重连中即可收 MOTD；键盘输入仍须已连接。 */
@@ -163,7 +184,7 @@ export function useSshTerminal(
     // OSC 7：shell 上报当前目录（xterm 解析；原始流里也会再扫一遍）
     terminal.parser.registerOscHandler(7, (data) => {
       const path = parseOsc7Path(data);
-      if (path) reportCwd(path);
+      if (path) reportCwd(path, "osc7");
       return true;
     });
 

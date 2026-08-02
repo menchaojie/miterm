@@ -93,6 +93,7 @@ export function TerminalWorkspace({
             key={activeTab.id}
             sessionId={activeTab.id}
             initialPath={filesInitialPath}
+            terminalCwd={activeTab.cwd ?? null}
             connected={activeTab.status === "connected"}
             onClose={() => setFilesOpen(false)}
           />

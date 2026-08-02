@@ -413,6 +413,8 @@ function App() {
 
   const handleCwdChange = useCallback(
     (sessionId: string, cwd: string | null) => {
+      // null 表示「未知」而非家目录；保留原 cwd，避免远程文件面板回落 ~/
+      if (cwd == null) return;
       updateTab(sessionId, { cwd });
     },
     [updateTab],

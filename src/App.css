@@ -2003,6 +2003,12 @@ body.remote-file-resizing * {
   cursor: default;
 }
 
+.remote-file-icon-btn.is-active {
+  color: #7ec8e3;
+  background: rgba(80, 160, 210, 0.18);
+  border-color: rgba(100, 180, 220, 0.45);
+}
+
 .remote-file-actions {
   display: flex;
   align-items: center;
