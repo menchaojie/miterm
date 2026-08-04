@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -18,6 +19,13 @@ import type {
 const CURSOR_COLOR = "#4fc3f7";
 /** 非输入态实心块：贴近底色，弱化存在感 */
 const CURSOR_DIM = "#2c2c2c";
+
+const terminalBySession = new Map<string, Terminal>();
+
+/** 供右键菜单读取选区 */
+export function getSessionTerminalSelection(sessionId: string): string {
+  return terminalBySession.get(sessionId)?.getSelection() ?? "";
+}
 
 export type TerminalCursorStyle = "bar" | "block" | "underline";
 
@@ -41,6 +49,8 @@ export function useSshTerminal(
   homeHint?: string | null,
   /** 会话已记录的 cwd（种子 / 重连前路径） */
   initialCwd?: string | null,
+  /** 终端字号（px） */
+  fontSize = 14,
 ) {
   const connected = status === "connected";
   const terminalRef = useRef<Terminal | null>(null);
@@ -52,6 +62,8 @@ export function useSshTerminal(
   const onCwdChangeRef = useRef(onCwdChange);
   const homeHintRef = useRef(homeHint ?? null);
   const cwdRef = useRef<string | null>(initialCwd ?? homeHint ?? null);
+  /** 已通知给上层（远程文件面板）的 cwd；与 cwdRef 分开，避免乐观 cd 误带动面板 */
+  const publishedCwdRef = useRef<string | null>(initialCwd ?? homeHint ?? null);
   const lineTrackerRef = useRef(new InputLineTracker());
   const promptScanBufRef = useRef("");
   const lastNoticeSeqRef = useRef(0);
@@ -64,16 +76,15 @@ export function useSshTerminal(
 
   /**
    * source:
-   * - cd / osc7：可信，始终采纳
-   * - prompt：提示符猜测；若从「非家目录」突然变成家目录则忽略（敲命令时易误报 ~）
-   * - null：不清除已有 cwd，避免面板回落到 ~/
+   * - osc7：可信，更新并通知面板
+   * - prompt：仅空闲提示符；敲字中忽略；通知面板
+   * - cd：本地乐观推断，只更新内部 cwdRef，等 prompt/osc7 再推面板（避免命令执行中乱跳）
    */
   const reportCwd = (
     next: string | null,
     source: "cd" | "osc7" | "prompt" = "osc7",
   ) => {
     if (next == null) return;
-    if (next === cwdRef.current) return;
     const home = homeHintRef.current;
     if (
       source === "prompt" &&
@@ -84,7 +95,17 @@ export function useSshTerminal(
     ) {
       return;
     }
+    if (source === "cd") {
+      if (next === cwdRef.current) return;
+      cwdRef.current = next;
+      return;
+    }
+    if (next === publishedCwdRef.current) {
+      cwdRef.current = next;
+      return;
+    }
     cwdRef.current = next;
+    publishedCwdRef.current = next;
     onCwdChangeRef.current?.(next);
   };
 
@@ -105,7 +126,9 @@ export function useSshTerminal(
       const path = parseOsc7Path(payload);
       if (path) reportCwd(path, "osc7");
     }
+    // 正在输入时提示符行不完整，勿用 prompt 推断（会误扫历史假提示符）
     promptScanBufRef.current = (promptScanBufRef.current + text).slice(-4096);
+    if (lineTrackerRef.current.hasPending()) return;
     const fromPrompt = cwdFromPromptOutput(
       promptScanBufRef.current,
       homeHintRef.current,
@@ -158,7 +181,7 @@ export function useSshTerminal(
       cursorStyle,
       cursorInactiveStyle: cursorStyle,
       cursorWidth: cursorStyle === "bar" ? 2 : 1,
-      fontSize: 14,
+      fontSize,
       theme: {
         background: "#1e1e1e",
         foreground: "#d4d4d4",
@@ -168,15 +191,24 @@ export function useSshTerminal(
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    // Ctrl/Cmd + 左键打开链接
+    const webLinks = new WebLinksAddon((event, uri) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      event.preventDefault();
+      void invoke("open_url", { url: uri }).catch(console.error);
+    });
+    terminal.loadAddon(webLinks);
     terminal.open(container);
     fitAddon.fit();
 
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
+    terminalBySession.set(sessionId, terminal);
     lastNoticeSeqRef.current = 0;
     lineTrackerRef.current.reset();
     promptScanBufRef.current = "";
     cwdRef.current = initialCwd ?? homeHint ?? null;
+    publishedCwdRef.current = cwdRef.current;
     if (cwdRef.current) {
       onCwdChangeRef.current?.(cwdRef.current);
     }
@@ -241,6 +273,9 @@ export function useSshTerminal(
       window.removeEventListener("resize", onWindowResize);
       onData.dispose();
       unlistenOutput.then((fn) => fn());
+      if (terminalBySession.get(sessionId) === terminal) {
+        terminalBySession.delete(sessionId);
+      }
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -321,6 +356,14 @@ export function useSshTerminal(
     };
     terminal.refresh(0, terminal.rows - 1);
   }, [cursorBlink, cursorStyle, cursorColor]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    if (terminal.options.fontSize === fontSize) return;
+    terminal.options.fontSize = fontSize;
+    void resize();
+  }, [fontSize, resize]);
 
   return { resize };
 }
