@@ -11,6 +11,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { TerminalWorkspace } from "./components/TerminalWorkspace";
 import {
   SHORTCUT_ACTIONS,
+  clampTerminalFontSize,
   isLocalShellKind,
   loadSettings,
   localShellLabel,
@@ -1136,6 +1137,28 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (settingsOpen || editorOpen) return;
+      if (!settingsRef.current.ctrlWheelZoom) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest?.(".terminal-view-wrap")) return;
+      e.preventDefault();
+      if (e.deltaY === 0) return;
+      const dir = e.deltaY < 0 ? 1 : -1;
+      setSettings((prev) => {
+        const nextSize = clampTerminalFontSize(prev.terminalFontSize + dir);
+        if (nextSize === prev.terminalFontSize) return prev;
+        const next = { ...prev, terminalFontSize: nextSize };
+        saveSettings(next);
+        return next;
+      });
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, [editorOpen, settingsOpen]);
+
+  useEffect(() => {
     const unlisten = listen<SshClosedEvent>("ssh-closed", (event) => {
       const { sessionId, reason } = event.payload;
       const normalized: SshCloseReason =
@@ -1385,6 +1408,7 @@ function App() {
                   onSyncControlChange={
                     visible ? handleSyncControlChange : undefined
                   }
+                  fontSize={settings.terminalFontSize}
                 />
               </div>
             );
@@ -1441,6 +1465,7 @@ function App() {
                   onSyncControlChange={
                     visible ? handleSyncControlChange : undefined
                   }
+                  fontSize={settings.terminalFontSize}
                 />
               </div>
             );
