@@ -11,4 +11,8 @@ commands.allow = [
   "create_category",
   "update_category",
   "delete_category",
+  "list_workspaces",
+  "save_workspace",
+  "update_workspace",
+  "delete_workspace",
 ]

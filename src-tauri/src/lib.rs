@@ -6,8 +6,8 @@ mod ssh;
 use std::sync::Arc;
 
 use db::{
-    Category, HostStore, SaveCategoryParams, SaveHostParams, SavedHost, UpdateCategoryParams,
-    UpdateHostParams,
+    Category, HostStore, SaveCategoryParams, SaveHostParams, SaveWorkspaceParams, SavedHost,
+    SavedWorkspace, UpdateCategoryParams, UpdateHostParams, UpdateWorkspaceParams,
 };
 use local::{LocalConnectParams, LocalSessionManager};
 use ssh::{
@@ -315,6 +315,44 @@ async fn delete_category(state: State<'_, AppState>, id: i64) -> Result<(), Stri
         .map_err(|e| format!("task join error: {e}"))?
 }
 
+#[tauri::command]
+async fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<SavedWorkspace>, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.list_workspaces())
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn save_workspace(
+    state: State<'_, AppState>,
+    params: SaveWorkspaceParams,
+) -> Result<SavedWorkspace, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.save_workspace(params))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn update_workspace(
+    state: State<'_, AppState>,
+    params: UpdateWorkspaceParams,
+) -> Result<SavedWorkspace, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.update_workspace(params))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn delete_workspace(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.delete_workspace(id))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -362,7 +400,11 @@ pub fn run() {
             list_categories,
             create_category,
             update_category,
-            delete_category
+            delete_category,
+            list_workspaces,
+            save_workspace,
+            update_workspace,
+            delete_workspace
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

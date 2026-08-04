@@ -217,8 +217,8 @@ a,
 .hosts-panel {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 14px 18px 22px;
+  overflow: hidden;
+  padding: 0;
   box-sizing: border-box;
   background:
     radial-gradient(
@@ -227,6 +227,17 @@ a,
       transparent 55%
     ),
     var(--bg-app);
+  display: flex;
+  flex-direction: column;
+}
+
+.hosts-panel-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 18px 22px;
+  box-sizing: border-box;
 }
 
 .hosts-panel.panel-hidden,
@@ -2185,6 +2196,160 @@ body.split-sash-dragging .split-sash-horizontal {
   background: #161616;
   color: #d4d4d4;
   z-index: 5;
+}
+
+.remote-file-panel.is-embedded {
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
+  border-right: none;
+  flex: 1;
+  z-index: 1;
+}
+
+.workspace-sidebar {
+  position: relative;
+  width: 340px;
+  min-width: 220px;
+  max-width: min(720px, 70%);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: #161616;
+  color: #d4d4d4;
+  z-index: 5;
+}
+
+.workspace-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.workspace-sidebar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-sidebar-tab {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #9aa;
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.workspace-sidebar-tab:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ddd;
+}
+
+.workspace-sidebar-tab.active {
+  border-color: rgba(79, 195, 247, 0.35);
+  background: rgba(79, 195, 247, 0.12);
+  color: #e8f6fc;
+}
+
+.workspace-sidebar-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.workspace-list-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+}
+
+.workspace-list-toolbar {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-save-btn {
+  flex: 1;
+}
+
+.workspace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.workspace-list-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workspace-list-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e8e8e8;
+}
+
+.workspace-list-summary,
+.workspace-list-time {
+  font-size: 11px;
+  color: #8a97a4;
+}
+
+.workspace-list-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-list-empty,
+.workspace-list-error {
+  font-size: 12px;
+  color: #9aa;
+  padding: 12px 4px;
+}
+
+.workspace-list-error {
+  color: #e88;
+}
+
+.workspace-files-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hosts-panel-main {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
 }
 
 .remote-file-resize {

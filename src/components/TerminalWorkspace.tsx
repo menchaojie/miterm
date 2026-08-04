@@ -11,7 +11,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TerminalView, CURSOR_COLOR, CURSOR_DIM } from "./TerminalView";
-import { RemoteFilePanel } from "./RemoteFilePanel";
+import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import type { ConcurrentSyncControl } from "./ConcurrentWorkspace";
 import { getSessionTerminalSelection } from "../hooks/useSshTerminal";
 import type {
@@ -20,6 +20,7 @@ import type {
   SessionTab,
   SplitDirection,
 } from "../types";
+import type { SavedWorkspaceRow, WorkspacePayload } from "../workspace";
 import { guessUnixHome } from "../cwd";
 import {
   collectLayoutSessionIds,
@@ -36,6 +37,15 @@ interface TerminalWorkspaceProps {
   workspaceActive?: boolean;
   filesOpen: boolean;
   onFilesOpenChange: (open: boolean) => void;
+  /** 工作区侧栏 */
+  canSaveWorkspace?: boolean;
+  saveWorkspaceDisabledReason?: string;
+  onSaveWorkspace?: () => void;
+  onOpenWorkspace?: (
+    row: import("../workspace").SavedWorkspaceRow,
+    payload: import("../workspace").WorkspacePayload,
+  ) => void;
+  workspaceRefreshToken?: number;
   onSelectSubTab: (subTabId: string) => void;
   onSelectSession: (sessionId: string) => void;
   onCloseSubTab: (subTabId: string) => void;
@@ -43,6 +53,7 @@ interface TerminalWorkspaceProps {
   /** 新建二级 Tab */
   onAddSession: () => void;
   onSplitSession: (sessionId: string, direction: SplitDirection) => void;
+  onQuadSplitSession: (sessionId: string) => void;
   onSplitRatioChange: (splitId: string, ratio: number) => void;
   onReconnectSession?: (sessionId: string) => void;
   onCwdChange?: (sessionId: string, cwd: string | null) => void;
@@ -200,6 +211,66 @@ function IconSplitHorizontal() {
   );
 }
 
+function IconSplitQuad() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <rect
+        x="1.5"
+        y="2"
+        width="13"
+        height="12"
+        rx="1.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+      <path
+        d="M8 2.5v11M2 8h12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+      />
+      <rect
+        x="3"
+        y="3.4"
+        width="3.8"
+        height="3.2"
+        rx="0.5"
+        fill="currentColor"
+        opacity="0.22"
+      />
+      <rect
+        x="9.2"
+        y="3.4"
+        width="3.8"
+        height="3.2"
+        rx="0.5"
+        fill="currentColor"
+        opacity="0.3"
+      />
+      <rect
+        x="3"
+        y="9.4"
+        width="3.8"
+        height="3.2"
+        rx="0.5"
+        fill="currentColor"
+        opacity="0.3"
+      />
+      <rect
+        x="9.2"
+        y="9.4"
+        width="3.8"
+        height="3.2"
+        rx="0.5"
+        fill="currentColor"
+        opacity="0.4"
+      />
+    </svg>
+  );
+}
+
 function SplitSash({
   direction,
   ratio,
@@ -258,12 +329,18 @@ export function TerminalWorkspace({
   workspaceActive = true,
   filesOpen,
   onFilesOpenChange,
+  canSaveWorkspace = false,
+  saveWorkspaceDisabledReason,
+  onSaveWorkspace,
+  onOpenWorkspace,
+  workspaceRefreshToken = 0,
   onSelectSubTab,
   onSelectSession,
   onCloseSubTab,
   onCloseSession,
   onAddSession,
   onSplitSession,
+  onQuadSplitSession,
   onSplitRatioChange,
   onReconnectSession,
   onCwdChange,
@@ -591,14 +668,21 @@ export function TerminalWorkspace({
   return (
     <div className="terminal-workspace">
       <div className="terminal-workspace-main">
-        {workspaceActive && filesOpen && activeTab && canBrowseFiles ? (
-          <RemoteFilePanel
-            key={activeTab.id}
-            sessionId={activeTab.id}
-            initialPath={filesInitialPath}
-            terminalCwd={activeTab.cwd ?? null}
-            connected={activeTab.status === "connected"}
+        {workspaceActive && filesOpen ? (
+          <WorkspaceSidebar
             onClose={() => onFilesOpenChange(false)}
+            filesAvailable={canBrowseFiles}
+            filesSessionId={canBrowseFiles ? activeTab?.id ?? null : null}
+            filesInitialPath={filesInitialPath}
+            filesTerminalCwd={activeTab?.cwd ?? null}
+            filesConnected={activeTab?.status === "connected"}
+            canSaveCurrent={canSaveWorkspace}
+            saveDisabledReason={saveWorkspaceDisabledReason}
+            onSaveCurrent={() => onSaveWorkspace?.()}
+            onOpenWorkspace={(row, payload) =>
+              onOpenWorkspace?.(row as SavedWorkspaceRow, payload as WorkspacePayload)
+            }
+            refreshToken={workspaceRefreshToken}
           />
         ) : null}
 
@@ -697,22 +781,20 @@ export function TerminalWorkspace({
                     +
                   </button>
                 </div>
-                {canBrowseFiles ? (
-                  <button
-                    type="button"
-                    className={`solo-subtab-files${filesOpen ? " active" : ""}`}
-                    title="远程文件 (SFTP) · Ctrl+Shift+E"
-                    aria-label="远程文件"
-                    aria-pressed={filesOpen}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onFilesOpenChange(!filesOpen);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    文件
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  className={`solo-subtab-files${filesOpen ? " active" : ""}`}
+                  title="侧栏（工作区 / 远程文件）· Ctrl+Shift+E"
+                  aria-label="侧栏"
+                  aria-pressed={filesOpen}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFilesOpenChange(!filesOpen);
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  侧栏
+                </button>
               </div>
             </div>
           ) : null}
@@ -776,6 +858,23 @@ export function TerminalWorkspace({
                 <span className="session-ctx-menu-text">
                   <span className="session-ctx-menu-title">水平分割</span>
                   <span className="session-ctx-menu-hint">上下分屏</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="session-ctx-menu-item"
+                onClick={() => {
+                  onQuadSplitSession(ctxMenu.sessionId);
+                  setCtxMenu(null);
+                }}
+              >
+                <span className="session-ctx-menu-icon" aria-hidden="true">
+                  <IconSplitQuad />
+                </span>
+                <span className="session-ctx-menu-text">
+                  <span className="session-ctx-menu-title">田字分割</span>
+                  <span className="session-ctx-menu-hint">四格分屏</span>
                 </span>
               </button>
               {splitMode && ctxInLayout ? (

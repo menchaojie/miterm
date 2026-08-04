@@ -73,6 +73,48 @@ export function splitLeaf(
   };
 }
 
+/**
+ * 将 target 叶拆成田字四格：
+ * vertical → 左列 horizontal(原, a) | 右列 horizontal(b, c)
+ */
+export function quadSplitLeaf(
+  layout: FolderLayout,
+  targetSessionId: string,
+  newIds: [string, string, string],
+): FolderLayout {
+  const [idA, idB, idC] = newIds;
+  if (layout.type === "leaf") {
+    if (layout.sessionId !== targetSessionId) return layout;
+    return {
+      type: "split",
+      id: newSplitId(),
+      direction: "vertical",
+      ratio: 0.5,
+      first: {
+        type: "split",
+        id: newSplitId(),
+        direction: "horizontal",
+        ratio: 0.5,
+        first: layout,
+        second: leafLayout(idA),
+      },
+      second: {
+        type: "split",
+        id: newSplitId(),
+        direction: "horizontal",
+        ratio: 0.5,
+        first: leafLayout(idB),
+        second: leafLayout(idC),
+      },
+    };
+  }
+  return {
+    ...layout,
+    first: quadSplitLeaf(layout.first, targetSessionId, newIds),
+    second: quadSplitLeaf(layout.second, targetSessionId, newIds),
+  };
+}
+
 /** 从布局中移除会话；若整棵树空则返回 null；split 只剩一侧时提升 */
 export function removeSessionFromLayout(
   layout: FolderLayout,

@@ -59,6 +59,8 @@ interface RemoteFilePanelProps {
   terminalCwd?: string | null;
   connected: boolean;
   onClose: () => void;
+  /** 嵌入侧栏时由父级控制宽度，不显示自身关闭/拖宽 */
+  embedded?: boolean;
 }
 
 const WIDTH_KEY = "miterm.remoteFilePanelWidth";
@@ -195,6 +197,7 @@ export function RemoteFilePanel({
   terminalCwd = null,
   connected,
   onClose,
+  embedded = false,
 }: RemoteFilePanelProps) {
   const bootPath = initialPath || "/";
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth);
@@ -740,21 +743,23 @@ export function RemoteFilePanel({
 
   return (
     <aside
-      className="remote-file-panel"
+      className={`remote-file-panel${embedded ? " is-embedded" : ""}`}
       aria-label="远程文件"
-      style={{ width: panelWidth }}
+      style={embedded ? undefined : { width: panelWidth }}
     >
       <div className="remote-file-header">
         <span className="remote-file-title">远程文件</span>
-        <button
-          type="button"
-          className="remote-file-close"
-          title="关闭"
-          aria-label="关闭文件面板"
-          onClick={onClose}
-        >
-          ×
-        </button>
+        {embedded ? null : (
+          <button
+            type="button"
+            className="remote-file-close"
+            title="关闭"
+            aria-label="关闭文件面板"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        )}
       </div>
 
       <form className="remote-file-pathbar" onSubmit={onSubmitPath}>
@@ -1008,17 +1013,19 @@ export function RemoteFilePanel({
         )}
       </div>
 
-      <div
-        className="remote-file-resize"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="拖动调整远程文件面板宽度"
-        title="拖动调整宽度"
-        onPointerDown={onResizePointerDown}
-        onPointerMove={onResizePointerMove}
-        onPointerUp={onResizePointerUp}
-        onPointerCancel={onResizePointerUp}
-      />
+      {embedded ? null : (
+        <div
+          className="remote-file-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动调整远程文件面板宽度"
+          title="拖动调整宽度"
+          onPointerDown={onResizePointerDown}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+          onPointerCancel={onResizePointerUp}
+        />
+      )}
     </aside>
   );
 }

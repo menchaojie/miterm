@@ -51,8 +51,19 @@ import {
   removeSessionFromLayout,
   setSplitRatio,
   splitLeaf,
+  quadSplitLeaf,
 } from "./splitLayout";
 import { isRestorableCwd, shellSingleQuote, guessUnixHome } from "./cwd";
+import {
+  hydrateLayout,
+  resolveHostsForPayload,
+  saveWorkspaceRow,
+  serializeFolderWorkspace,
+  serializeGroupWorkspace,
+  type SavedWorkspaceRow,
+  type WorkspacePayload,
+} from "./workspace";
+import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
 import "./App.css";
 
 const DEFAULT_COLS = 80;
@@ -177,10 +188,11 @@ function App() {
   const [listError, setListError] = useState("");
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /** 各工作区（主机夹 / 并发组）远程文件侧栏是否打开 */
+  /** 各工作区（主机夹 / 并发组 / 主机列表）侧栏是否打开 */
   const [remoteFilesOpenMap, setRemoteFilesOpenMap] = useState<
     Record<string, boolean>
   >({});
+  const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0);
 
   const [savedHosts, setSavedHosts] = useState<SavedHost[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -770,6 +782,73 @@ function App() {
     [folders, refreshData, savedHosts, updateTab],
   );
 
+  /** 右键田字分屏：同机再开 3 条连接，当前叶变为四格 */
+  const quadSplitSessionInFolder = useCallback(
+    async (folderId: string, sessionId: string) => {
+      const folderRaw = folders.find((f) => f.id === folderId);
+      if (!folderRaw) return;
+      const folder = normalizeHostFolder(folderRaw);
+      if (!folder.sessionIds.includes(sessionId)) return;
+      const item = savedHosts.find((h) => h.id === folder.savedHostId);
+      if (!item) {
+        setListError("该主机已从列表删除，无法再开连接");
+        return;
+      }
+
+      const activeSub = getActiveSubTab(folder);
+      if (!layoutContainsSession(activeSub.layout, sessionId)) return;
+
+      const newIds: [string, string, string] = [
+        newSessionId(),
+        newSessionId(),
+        newSessionId(),
+      ];
+      const tabs = newIds.map((id) =>
+        buildSessionTab(item, id, { folderId }),
+      );
+
+      setSessionTabs((prev) => [...prev, ...tabs]);
+      setFolders((prev) =>
+        prev.map((raw) => {
+          if (raw.id !== folderId) return raw;
+          const f = normalizeHostFolder(raw);
+          const subTabs = mapSubTabLayout(f.subTabs, f.activeSubTabId, (lay) =>
+            quadSplitLeaf(lay, sessionId, newIds),
+          );
+          return {
+            ...f,
+            subTabs,
+            activeSessionId: newIds[0],
+            sessionIds: collectSubTabsSessionIds(subTabs),
+          };
+        }),
+      );
+      setActiveTabId(folderId);
+      setListError("");
+
+      await Promise.all(
+        newIds.map(async (id) => {
+          try {
+            await invokeConnect(item, id);
+            updateTab(id, { status: "connected", errorMessage: "" });
+          } catch (e) {
+            updateTab(id, {
+              status: "error",
+              errorMessage: String(e),
+            });
+          }
+        }),
+      );
+      try {
+        await invoke("touch_saved_host", { id: item.id });
+        await refreshData();
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [folders, refreshData, savedHosts, updateTab],
+  );
+
   const handleConcurrentConnect = useCallback(
     async (hosts: SavedHost[]) => {
       if (hosts.length < 2) {
@@ -1136,6 +1215,199 @@ function App() {
     setSettingsOpen(false);
   }, []);
 
+  const handleSaveCurrentWorkspace = useCallback(async () => {
+    const name = window.prompt("工作区名称");
+    if (name == null) return;
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setListError("工作区名称不能为空");
+      return;
+    }
+
+    try {
+      if (activeFolder) {
+        const folder = normalizeHostFolder(activeFolder);
+        const folderSessions = sessionTabs.filter(
+          (t) => t.folderId === folder.id,
+        );
+        const payload = serializeFolderWorkspace(folder, folderSessions);
+        await saveWorkspaceRow({
+          name: trimmed,
+          kind: "folder",
+          payload: JSON.stringify(payload),
+        });
+      } else if (activeGroup) {
+        const groupSessions = sessionTabs.filter(
+          (t) => t.groupId === activeGroup.id,
+        );
+        const payload = serializeGroupWorkspace(activeGroup, groupSessions);
+        if (!payload) {
+          setListError("并发工作区至少需要 2 台有效主机");
+          return;
+        }
+        await saveWorkspaceRow({
+          name: trimmed,
+          kind: "group",
+          payload: JSON.stringify(payload),
+        });
+      } else {
+        setListError("请先打开主机夹或并发会话再保存工作区");
+        return;
+      }
+      setListError("");
+      setWorkspaceRefreshToken((n) => n + 1);
+    } catch (e) {
+      setListError(String(e));
+    }
+  }, [activeFolder, activeGroup, sessionTabs]);
+
+  const handleOpenWorkspace = useCallback(
+    async (_row: SavedWorkspaceRow, payload: WorkspacePayload) => {
+      const check = resolveHostsForPayload(payload, savedHostsRef.current);
+      if (!check.ok) {
+        setListError(
+          `无法打开：缺少主机 id ${check.missing.join(", ")}（可能已删除）`,
+        );
+        return;
+      }
+
+      const hostsById = new Map(
+        savedHostsRef.current.map((h) => [h.id, h] as const),
+      );
+
+      try {
+        if (payload.kind === "folder") {
+          const folderId = newFolderId();
+          const cwdBySession = new Map<string, string | null | undefined>();
+          const tabs: SessionTab[] = [];
+          const alloc = (
+            savedHostId: number,
+            cwd: string | null | undefined,
+          ) => {
+            const item = hostsById.get(savedHostId);
+            if (!item) throw new Error(`missing host ${savedHostId}`);
+            const sessionId = newSessionId();
+            const tab = buildSessionTab(item, sessionId, { folderId });
+            if (cwd) tab.cwd = cwd;
+            tabs.push(tab);
+            cwdBySession.set(sessionId, cwd);
+            return sessionId;
+          };
+
+          const subTabs: FolderSubTab[] = [];
+          let allLeafIds: string[] = [];
+          for (const st of payload.subTabs) {
+            const hydrated = hydrateLayout(st.layout, alloc);
+            subTabs.push({ id: newSubTabId(), layout: hydrated.layout });
+            allLeafIds = allLeafIds.concat(hydrated.leafSessionIds);
+          }
+          if (subTabs.length === 0) {
+            setListError("工作区内容为空");
+            return;
+          }
+
+          const activeSubTabIndex = Math.min(
+            Math.max(0, payload.activeSubTabIndex ?? 0),
+            subTabs.length - 1,
+          );
+          const activeSub = subTabs[activeSubTabIndex];
+          const leafIds = collectLayoutSessionIds(activeSub.layout);
+          const activeLeafIndex = Math.min(
+            Math.max(0, payload.activeLeafIndex ?? 0),
+            Math.max(0, leafIds.length - 1),
+          );
+          const activeSessionId =
+            leafIds[activeLeafIndex] ?? leafIds[0] ?? allLeafIds[0];
+
+          const baseItem = hostsById.get(payload.savedHostId);
+          const folder: HostFolder = {
+            id: folderId,
+            savedHostId: payload.savedHostId,
+            baseTitle:
+              payload.baseTitle ||
+              (baseItem ? hostBaseTitle(baseItem) : "工作区"),
+            subTabs,
+            activeSubTabId: activeSub.id,
+            activeSessionId,
+            sessionIds: allLeafIds,
+          };
+
+          setSessionTabs((prev) => [...prev, ...tabs]);
+          setFolders((prev) => [...prev, folder]);
+          setActiveTabId(folderId);
+          setListError("");
+
+          await Promise.all(
+            tabs.map(async (tab) => {
+              const item = hostsById.get(tab.savedHostId!);
+              if (!item) return;
+              try {
+                await invokeConnect(item, tab.id);
+                updateTab(tab.id, { status: "connected", errorMessage: "" });
+                const cwd = cwdBySession.get(tab.id);
+                if (tab.kind !== "local" && isRestorableCwd(cwd)) {
+                  void restoreCwdAfterReconnect(tab.id, cwd);
+                }
+              } catch (e) {
+                updateTab(tab.id, {
+                  status: "error",
+                  errorMessage: String(e),
+                });
+              }
+            }),
+          );
+          return;
+        }
+
+        // group
+        const groupId = newGroupId();
+        const prepared = payload.members.map((m) => {
+          const item = hostsById.get(m.savedHostId)!;
+          const sessionId = newSessionId();
+          const tab = buildSessionTab(item, sessionId, { groupId });
+          if (m.cwd) tab.cwd = m.cwd;
+          return { item, sessionId, tab, cwd: m.cwd };
+        });
+        const sessionIds = prepared.map((p) => p.sessionId);
+        const focusedIndex = Math.min(
+          Math.max(0, payload.focusedIndex ?? 0),
+          sessionIds.length - 1,
+        );
+        const group: ConcurrentGroup = {
+          id: groupId,
+          title: `并发 · ${prepared.length} 台`,
+          sessionIds,
+          focusedSessionId: sessionIds[focusedIndex] ?? null,
+        };
+
+        setSessionTabs((prev) => [...prev, ...prepared.map((p) => p.tab)]);
+        setGroups((prev) => [...prev, group]);
+        setActiveTabId(groupId);
+        setListError("");
+
+        await Promise.all(
+          prepared.map(async ({ item, sessionId, tab, cwd }) => {
+            try {
+              await invokeConnect(item, sessionId);
+              updateTab(sessionId, { status: "connected", errorMessage: "" });
+              if (tab.kind !== "local" && isRestorableCwd(cwd)) {
+                void restoreCwdAfterReconnect(sessionId, cwd);
+              }
+            } catch (e) {
+              updateTab(sessionId, {
+                status: "error",
+                errorMessage: String(e),
+              });
+            }
+          }),
+        );
+      } catch (e) {
+        setListError(String(e));
+      }
+    },
+    [restoreCwdAfterReconnect, updateTab],
+  );
+
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       if (settingsOpen || editorOpen) return;
@@ -1199,32 +1471,60 @@ function App() {
         if (kind === "toggleFiles") {
           e.preventDefault();
           e.stopPropagation();
-          if (onHostsTab || e.repeat) return;
+          if (e.repeat) return;
 
-          let workspaceId: string | null = null;
-          let sessionId: string | null = null;
-          if (activeFolder) {
-            workspaceId = activeFolder.id;
-            sessionId = activeFolder.activeSessionId;
-          } else if (activeGroup) {
-            workspaceId = activeGroup.id;
-            const focusId = activeGroup.focusedSessionId;
-            sessionId =
-              focusId && activeGroup.sessionIds.includes(focusId)
-                ? focusId
-                : (activeGroup.sessionIds[0] ?? null);
-          }
-          if (!workspaceId || !sessionId) return;
-
-          const tab = sessionTabs.find((t) => t.id === sessionId);
-          if (!tab || tab.kind === "local" || tab.status !== "connected") {
+          if (onHostsTab) {
+            setRemoteFilesOpenMap((prev) => ({
+              ...prev,
+              [HOSTS_TAB_ID]: !Boolean(prev[HOSTS_TAB_ID]),
+            }));
             return;
           }
+
+          let workspaceId: string | null = null;
+          if (activeFolder) workspaceId = activeFolder.id;
+          else if (activeGroup) workspaceId = activeGroup.id;
+          if (!workspaceId) return;
 
           setRemoteFilesOpenMap((prev) => ({
             ...prev,
             [workspaceId!]: !Boolean(prev[workspaceId!]),
           }));
+          return;
+        }
+        if (
+          kind === "focusPane1" ||
+          kind === "focusPane2" ||
+          kind === "focusPane3" ||
+          kind === "focusPane4"
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          const paneIndex =
+            kind === "focusPane1"
+              ? 0
+              : kind === "focusPane2"
+                ? 1
+                : kind === "focusPane3"
+                  ? 2
+                  : 3;
+          if (activeGroup) {
+            const paneIds = activeGroup.sessionIds.filter((id) =>
+              sessionTabs.some((t) => t.id === id),
+            );
+            const target = paneIds[paneIndex];
+            if (target) focusSessionInGroup(activeGroup.id, target);
+            return;
+          }
+          if (activeFolder) {
+            const folder = normalizeHostFolder(activeFolder);
+            const paneIds = collectLayoutSessionIds(
+              getActiveSubTab(folder).layout,
+            );
+            const target = paneIds[paneIndex];
+            if (target) focusSessionInFolder(folder.id, target);
+            return;
+          }
           return;
         }
         if (kind === "prevPane" || kind === "nextPane") {
@@ -1352,22 +1652,44 @@ function App() {
           className={`hosts-panel${onHostsTab ? "" : " panel-hidden"}`}
           aria-hidden={!onHostsTab}
         >
-          <HostListPage
-            hosts={savedHosts}
-            categories={categories}
-            selectedFilter={selectedFilter}
-            status="idle"
-            errorMessage={listError}
-            onSelectFilter={setSelectedFilter}
-            onAddCategory={handleAddCategory}
-            onRenameCategory={handleRenameCategory}
-            onDeleteCategory={handleDeleteCategory}
-            onAdd={openAdd}
-            onLogin={handleLogin}
-            onEdit={openEdit}
-            onDelete={handleDelete}
-            onConcurrentConnect={handleConcurrentConnect}
-          />
+          <div className="hosts-panel-main">
+            {Boolean(remoteFilesOpenMap[HOSTS_TAB_ID]) ? (
+              <WorkspaceSidebar
+                onClose={() =>
+                  setRemoteFilesOpenMap((prev) => ({
+                    ...prev,
+                    [HOSTS_TAB_ID]: false,
+                  }))
+                }
+                filesAvailable={false}
+                canSaveCurrent={false}
+                saveDisabledReason="请先打开主机夹或并发会话"
+                onSaveCurrent={() => undefined}
+                onOpenWorkspace={(row, payload) => {
+                  void handleOpenWorkspace(row, payload);
+                }}
+                refreshToken={workspaceRefreshToken}
+              />
+            ) : null}
+            <div className="hosts-panel-body">
+              <HostListPage
+                hosts={savedHosts}
+                categories={categories}
+                selectedFilter={selectedFilter}
+                status="idle"
+                errorMessage={listError}
+                onSelectFilter={setSelectedFilter}
+                onAddCategory={handleAddCategory}
+                onRenameCategory={handleRenameCategory}
+                onDeleteCategory={handleDeleteCategory}
+                onAdd={openAdd}
+                onLogin={handleLogin}
+                onEdit={openEdit}
+                onDelete={handleDelete}
+                onConcurrentConnect={handleConcurrentConnect}
+              />
+            </div>
+          </div>
         </div>
 
         <div
@@ -1409,6 +1731,14 @@ function App() {
                     visible ? handleSyncControlChange : undefined
                   }
                   fontSize={settings.terminalFontSize}
+                  canSaveWorkspace
+                  onSaveWorkspace={() => {
+                    void handleSaveCurrentWorkspace();
+                  }}
+                  onOpenWorkspace={(row, payload) => {
+                    void handleOpenWorkspace(row, payload);
+                  }}
+                  workspaceRefreshToken={workspaceRefreshToken}
                 />
               </div>
             );
@@ -1459,6 +1789,9 @@ function App() {
                   onSplitSession={(sessionId, direction) => {
                     void splitSessionInFolder(folder.id, sessionId, direction);
                   }}
+                  onQuadSplitSession={(sessionId) => {
+                    void quadSplitSessionInFolder(folder.id, sessionId);
+                  }}
                   onSplitRatioChange={(splitId, ratio) => {
                     changeFolderSplitRatio(folder.id, splitId, ratio);
                   }}
@@ -1466,6 +1799,14 @@ function App() {
                     visible ? handleSyncControlChange : undefined
                   }
                   fontSize={settings.terminalFontSize}
+                  canSaveWorkspace
+                  onSaveWorkspace={() => {
+                    void handleSaveCurrentWorkspace();
+                  }}
+                  onOpenWorkspace={(row, payload) => {
+                    void handleOpenWorkspace(row, payload);
+                  }}
+                  workspaceRefreshToken={workspaceRefreshToken}
                 />
               </div>
             );

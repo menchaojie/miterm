@@ -101,9 +101,9 @@ export function SettingsModal({
     activeTab === "shortcutsNav"
       ? "默认：Ctrl+Tab / Ctrl+Shift+Tab 切会话 Tab；Ctrl+1～9 跳到对应 Tab（1=主机列表）。"
       : activeTab === "shortcutsPane"
-        ? "默认：Ctrl+Shift+[ / ] 切并发窗格或主机夹二级会话。"
+        ? "默认：Ctrl+Shift+[ / ] 切窗格；Ctrl+Alt+1～4 跳到第 N 窗格。"
         : activeTab === "shortcutsFiles"
-          ? "默认：Ctrl+Shift+E 打开或关闭远程文件侧栏（仅已连接的 SSH 会话）。"
+          ? "默认：Ctrl+Shift+E 打开或关闭侧栏（工作区 / 远程文件）。"
           : "";
 
   return (

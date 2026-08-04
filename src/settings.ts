@@ -16,6 +16,10 @@ export type ShortcutActionId =
   | "nextTab"
   | "previousPane"
   | "nextPane"
+  | "focusPane1"
+  | "focusPane2"
+  | "focusPane3"
+  | "focusPane4"
   | "hostsTab"
   | "tab2"
   | "tab3"
@@ -144,9 +148,30 @@ export const SHORTCUT_ACTIONS: {
     tab: "shortcutsPane",
   },
   {
+    id: "focusPane1",
+    label: "聚焦第 1 窗格",
+    hint: "当前分屏或并发组内",
+    tab: "shortcutsPane",
+  },
+  {
+    id: "focusPane2",
+    label: "聚焦第 2 窗格",
+    tab: "shortcutsPane",
+  },
+  {
+    id: "focusPane3",
+    label: "聚焦第 3 窗格",
+    tab: "shortcutsPane",
+  },
+  {
+    id: "focusPane4",
+    label: "聚焦第 4 窗格",
+    tab: "shortcutsPane",
+  },
+  {
     id: "toggleRemoteFiles",
-    label: "打开/关闭远程文件",
-    hint: "仅 SSH 会话可用；交替显示侧栏",
+    label: "打开/关闭侧栏",
+    hint: "工作区与远程文件；默认 Ctrl+Shift+E",
     tab: "shortcutsFiles",
   },
 ];
@@ -172,6 +197,10 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   nextTab: binding("tab", { ctrl: true }),
   previousPane: binding("[", { ctrl: true, shift: true }),
   nextPane: binding("]", { ctrl: true, shift: true }),
+  focusPane1: binding("1", { ctrl: true, alt: true }),
+  focusPane2: binding("2", { ctrl: true, alt: true }),
+  focusPane3: binding("3", { ctrl: true, alt: true }),
+  focusPane4: binding("4", { ctrl: true, alt: true }),
   hostsTab: binding("1", { ctrl: true }),
   tab2: binding("2", { ctrl: true }),
   tab3: binding("3", { ctrl: true }),
@@ -399,7 +428,17 @@ export function findShortcutConflict(
 /** Tab / 窗格 / 面板动作分类 */
 export function tabIndexForAction(
   action: ShortcutActionId,
-): number | "prev" | "next" | "prevPane" | "nextPane" | "toggleFiles" {
+):
+  | number
+  | "prev"
+  | "next"
+  | "prevPane"
+  | "nextPane"
+  | "toggleFiles"
+  | "focusPane1"
+  | "focusPane2"
+  | "focusPane3"
+  | "focusPane4" {
   switch (action) {
     case "previousTab":
       return "prev";
@@ -409,6 +448,14 @@ export function tabIndexForAction(
       return "prevPane";
     case "nextPane":
       return "nextPane";
+    case "focusPane1":
+      return "focusPane1";
+    case "focusPane2":
+      return "focusPane2";
+    case "focusPane3":
+      return "focusPane3";
+    case "focusPane4":
+      return "focusPane4";
     case "toggleRemoteFiles":
       return "toggleFiles";
     case "hostsTab":

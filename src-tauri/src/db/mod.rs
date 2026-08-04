@@ -72,6 +72,34 @@ pub struct UpdateCategoryParams {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedWorkspace {
+    pub id: i64,
+    pub name: String,
+    /// folder | group
+    pub kind: String,
+    pub payload: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWorkspaceParams {
+    pub name: String,
+    pub kind: String,
+    pub payload: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWorkspaceParams {
+    pub id: i64,
+    pub name: String,
+    pub kind: String,
+    pub payload: String,
+}
+
 fn resolve_name(name: &str, fallback: &str) -> String {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -199,6 +227,13 @@ impl HostStore {
                conn_type TEXT NOT NULL DEFAULT 'ssh',
                shell TEXT NOT NULL DEFAULT '',
                shell_path TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE IF NOT EXISTS workspaces (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               name TEXT NOT NULL,
+               kind TEXT NOT NULL,
+               payload TEXT NOT NULL,
+               updated_at INTEGER NOT NULL
              );",
         )
         .map_err(|e| format!("init schema: {e}"))?;
@@ -545,6 +580,113 @@ impl HostStore {
             .map_err(|e| format!("delete: {e}"))?;
         if n == 0 {
             return Err("host not found".into());
+        }
+        Ok(())
+    }
+
+    pub fn list_workspaces(&self) -> Result<Vec<SavedWorkspace>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, kind, payload, updated_at FROM workspaces
+                 ORDER BY updated_at DESC, id DESC",
+            )
+            .map_err(|e| format!("prepare workspaces: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(SavedWorkspace {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    kind: row.get(2)?,
+                    payload: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("query workspaces: {e}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| format!("workspace row: {e}"))?);
+        }
+        Ok(out)
+    }
+
+    pub fn save_workspace(&self, params: SaveWorkspaceParams) -> Result<SavedWorkspace, String> {
+        let name = params.name.trim();
+        if name.is_empty() {
+            return Err("工作区名称不能为空".into());
+        }
+        let kind = match params.kind.trim() {
+            "group" => "group",
+            _ => "folder",
+        };
+        if params.payload.trim().is_empty() {
+            return Err("工作区内容不能为空".into());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO workspaces (name, kind, payload, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![name, kind, params.payload, now],
+        )
+        .map_err(|e| format!("save workspace: {e}"))?;
+        let id = conn.last_insert_rowid();
+        Ok(SavedWorkspace {
+            id,
+            name: name.to_string(),
+            kind: kind.to_string(),
+            payload: params.payload,
+            updated_at: now,
+        })
+    }
+
+    pub fn update_workspace(
+        &self,
+        params: UpdateWorkspaceParams,
+    ) -> Result<SavedWorkspace, String> {
+        let name = params.name.trim();
+        if name.is_empty() {
+            return Err("工作区名称不能为空".into());
+        }
+        let kind = match params.kind.trim() {
+            "group" => "group",
+            _ => "folder",
+        };
+        if params.payload.trim().is_empty() {
+            return Err("工作区内容不能为空".into());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let conn = self.conn.lock();
+        let n = conn
+            .execute(
+                "UPDATE workspaces SET name = ?1, kind = ?2, payload = ?3, updated_at = ?4 WHERE id = ?5",
+                params![name, kind, params.payload, now, params.id],
+            )
+            .map_err(|e| format!("update workspace: {e}"))?;
+        if n == 0 {
+            return Err("workspace not found".into());
+        }
+        Ok(SavedWorkspace {
+            id: params.id,
+            name: name.to_string(),
+            kind: kind.to_string(),
+            payload: params.payload,
+            updated_at: now,
+        })
+    }
+
+    pub fn delete_workspace(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM workspaces WHERE id = ?1", params![id])
+            .map_err(|e| format!("delete workspace: {e}"))?;
+        if n == 0 {
+            return Err("workspace not found".into());
         }
         Ok(())
     }

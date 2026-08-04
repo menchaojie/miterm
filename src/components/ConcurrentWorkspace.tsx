@@ -2,10 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TerminalView, CURSOR_COLOR, CURSOR_DIM } from "./TerminalView";
-import { RemoteFilePanel } from "./RemoteFilePanel";
+import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { getSessionTerminalSelection } from "../hooks/useSshTerminal";
 import type { SessionTab } from "../types";
 import { concurrentGridDims, concurrentLastCellColSpan } from "../types";
+import type { SavedWorkspaceRow, WorkspacePayload } from "../workspace";
 import { guessUnixHome } from "../cwd";
 
 export interface ConcurrentSyncControl {
@@ -26,6 +27,14 @@ interface ConcurrentWorkspaceProps {
   /** 远程文件侧栏（由 App 控制，便于全局快捷键） */
   filesOpen: boolean;
   onFilesOpenChange: (open: boolean) => void;
+  canSaveWorkspace?: boolean;
+  saveWorkspaceDisabledReason?: string;
+  onSaveWorkspace?: () => void;
+  onOpenWorkspace?: (
+    row: SavedWorkspaceRow,
+    payload: WorkspacePayload,
+  ) => void;
+  workspaceRefreshToken?: number;
   onFocusSession: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
   onReconnectSession?: (sessionId: string) => void;
@@ -83,6 +92,11 @@ export function ConcurrentWorkspace({
   workspaceActive = true,
   filesOpen,
   onFilesOpenChange,
+  canSaveWorkspace = false,
+  saveWorkspaceDisabledReason,
+  onSaveWorkspace,
+  onOpenWorkspace,
+  workspaceRefreshToken = 0,
   onFocusSession,
   onCloseSession,
   onReconnectSession,
@@ -301,14 +315,19 @@ export function ConcurrentWorkspace({
   return (
     <div className="concurrent-workspace">
       <div className="concurrent-workspace-main">
-      {workspaceActive && filesOpen && focusedTab && canBrowseFiles ? (
-        <RemoteFilePanel
-          key={focusedTab.id}
-          sessionId={focusedTab.id}
-          initialPath={filesInitialPath}
-          terminalCwd={focusedTab.cwd ?? null}
-          connected={focusedTab.status === "connected"}
+      {workspaceActive && filesOpen ? (
+        <WorkspaceSidebar
           onClose={() => onFilesOpenChange(false)}
+          filesAvailable={canBrowseFiles}
+          filesSessionId={canBrowseFiles ? focusedTab?.id ?? null : null}
+          filesInitialPath={filesInitialPath}
+          filesTerminalCwd={focusedTab?.cwd ?? null}
+          filesConnected={focusedTab?.status === "connected"}
+          canSaveCurrent={canSaveWorkspace}
+          saveDisabledReason={saveWorkspaceDisabledReason}
+          onSaveCurrent={() => onSaveWorkspace?.()}
+          onOpenWorkspace={(row, payload) => onOpenWorkspace?.(row, payload)}
+          refreshToken={workspaceRefreshToken}
         />
       ) : null}
       <div
@@ -428,8 +447,8 @@ export function ConcurrentWorkspace({
                         className={`concurrent-files-btn${
                           filesOpen && focused ? " active" : ""
                         }`}
-                        title="远程文件 (SFTP)"
-                        aria-label={`远程文件：${label}`}
+                        title="侧栏（工作区 / 远程文件）"
+                        aria-label={`侧栏：${label}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           onFocusSession(tab.id);
