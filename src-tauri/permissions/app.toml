@@ -1,0 +1,6 @@
+[[permission]]
+identifier = "allow-app-commands"
+description = "Allow app utility commands such as opening URLs."
+commands.allow = [
+  "open_url"
+]

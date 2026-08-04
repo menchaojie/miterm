@@ -15,6 +15,7 @@
     "core:window:allow-set-focus",
     "core:window:allow-set-shadow",
     "allow-ssh-commands",
-    "allow-host-commands"
+    "allow-host-commands",
+    "allow-app-commands"
   ]
 }

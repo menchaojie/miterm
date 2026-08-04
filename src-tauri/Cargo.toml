@@ -1,6 +1,6 @@
 [package]
 name = "miterm"
-version = "0.1.0"
+version = "1.0.0"
 description = "miterm SSH Terminal"
 authors = ["you"]
 edition = "2021"

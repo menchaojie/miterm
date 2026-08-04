@@ -125,23 +125,29 @@ export function stripAnsi(s: string): string {
 
 /**
  * 从 shell 输出末尾识别 user@host:path$/# 提示符中的路径。
- * 用于校正 Tab 补全后本地按键跟踪不完整的问题。
+ * 只认「最后一行非空行」——避免命令输出中间夹带的假提示符把 cwd 带跑。
  */
 export function cwdFromPromptOutput(
   text: string,
   homeHint?: string | null,
 ): string | null {
   const plain = stripAnsi(text).replace(/\r/g, "\n");
-  // 允许 (venv) 等前缀；路径取 user@host: 与 $# 之间
-  const re =
-    /(?:^|\n)[^\n]*?\b([\w.-]+)@([\w.-]+):([^\n$#]+?)[$#][ \t]*$/gm;
-  let last: RegExpExecArray | null = null;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(plain)) !== null) {
-    last = m;
+  const lines = plain.split("\n");
+  let lastLine = "";
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim().length > 0) {
+      lastLine = lines[i];
+      break;
+    }
   }
-  if (!last) return null;
-  return expandShellPath(last[3], homeHint);
+  if (!lastLine) return null;
+  // 行尾必须是空闲提示符（$# 后仅空白），中间行的假提示符一律忽略
+  const re = /\b([\w.-]+)@([\w.-]+):([^\n$#]+?)[$#][ \t]*$/;
+  const m = lastLine.match(re);
+  if (!m) return null;
+  const pathPart = m[3].trim();
+  if (!pathPart || pathPart.includes("@")) return null;
+  return expandShellPath(pathPart, homeHint);
 }
 
 /**
@@ -200,6 +206,11 @@ export type CompletedInputLine = {
 export class InputLineTracker {
   private buf = "";
   private usedTab = false;
+
+  /** 当前行仍有未提交输入（用户正在打字） */
+  hasPending(): boolean {
+    return this.buf.length > 0;
+  }
 
   push(data: string): CompletedInputLine[] {
     const completed: CompletedInputLine[] = [];

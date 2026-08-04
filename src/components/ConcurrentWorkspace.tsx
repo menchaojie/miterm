@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TerminalView, CURSOR_COLOR, CURSOR_DIM } from "./TerminalView";
 import { RemoteFilePanel } from "./RemoteFilePanel";
+import { getSessionTerminalSelection } from "../hooks/useSshTerminal";
 import type { SessionTab } from "../types";
 import { concurrentGridDims, concurrentLastCellColSpan } from "../types";
 import { guessUnixHome } from "../cwd";
@@ -31,6 +32,8 @@ interface ConcurrentWorkspaceProps {
   onCwdChange?: (sessionId: string, cwd: string | null) => void;
   /** 向 Tab 栏上报全选/取消控制（离开时传 null） */
   onSyncControlChange?: (control: ConcurrentSyncControl | null) => void;
+  /** 终端字号（px） */
+  fontSize?: number;
 }
 
 function sessionLabel(tab: SessionTab): string {
@@ -85,9 +88,17 @@ export function ConcurrentWorkspace({
   onReconnectSession,
   onCwdChange,
   onSyncControlChange,
+  fontSize = 14,
 }: ConcurrentWorkspaceProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [layoutEpoch, setLayoutEpoch] = useState(0);
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    sessionId: string;
+    selection: string;
+  } | null>(null);
+  const ctxMenuRef = useRef<HTMLDivElement | null>(null);
   const [syncIds, setSyncIds] = useState<Set<string>>(() => new Set());
   const syncIdsRef = useRef(syncIds);
   const sessionsRef = useRef(sessions);
@@ -228,6 +239,65 @@ export function ConcurrentWorkspace({
     focusedTab?.cwd ||
     (focusedTab ? guessUnixHome(focusedTab.username) : "/");
 
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
+
+  useLayoutEffect(() => {
+    if (!ctxMenu) return;
+    const el = ctxMenuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let x = ctxMenu.x;
+    let y = ctxMenu.y;
+    if (x + rect.width > window.innerWidth - pad) {
+      x = Math.max(pad, window.innerWidth - rect.width - pad);
+    }
+    if (y + rect.height > window.innerHeight - pad) {
+      y = Math.max(pad, window.innerHeight - rect.height - pad);
+    }
+    if (x !== ctxMenu.x || y !== ctxMenu.y) {
+      setCtxMenu((prev) => (prev ? { ...prev, x, y } : prev));
+    }
+  }, [ctxMenu]);
+
+  const openCtxMenu = (sessionId: string, e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onFocusSession(sessionId);
+    const selection = getSessionTerminalSelection(sessionId);
+    setCtxMenu({
+      x: e.clientX,
+      y: e.clientY,
+      sessionId,
+      selection,
+    });
+  };
+
+  const copySelection = async (text: string) => {
+    const value = text.trimEnd();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const ctxInSync = ctxMenu ? syncIds.has(ctxMenu.sessionId) : false;
+  const ctxSelection = ctxMenu?.selection?.trim() ? ctxMenu.selection : "";
+
   return (
     <div className="concurrent-workspace">
       <div className="concurrent-workspace-main">
@@ -280,6 +350,7 @@ export function ConcurrentWorkspace({
                 style={span > 1 ? { gridColumn: `span ${span}` } : undefined}
                 title={label}
                 onMouseDown={() => onFocusSession(tab.id)}
+                onContextMenuCapture={(e) => openCtxMenu(tab.id, e)}
               >
                 <div className="concurrent-cell-body">
                   <TerminalView
@@ -288,6 +359,7 @@ export function ConcurrentWorkspace({
                     visible
                     focused={focused && !(filesOpen && canBrowseFiles)}
                     layoutEpoch={layoutEpoch}
+                    fontSize={fontSize}
                     cursorBlink={false}
                     cursorStyle={
                       inSync || focused ? "bar" : "block"
@@ -389,6 +461,62 @@ export function ConcurrentWorkspace({
         </div>
       </div>
       </div>
+
+      {ctxMenu ? (
+        <div
+          ref={ctxMenuRef}
+          className="session-ctx-menu"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          role="menu"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {ctxSelection ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void copySelection(ctxSelection);
+                setCtxMenu(null);
+              }}
+            >
+              复制
+            </button>
+          ) : null}
+          {ctxSelection ? (
+            <div className="session-ctx-menu-sep" role="separator" />
+          ) : null}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              toggleSync(ctxMenu.sessionId);
+              setCtxMenu(null);
+            }}
+          >
+            {ctxInSync ? "退出并发输入" : "加入并发输入"}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              selectAllSync();
+              setCtxMenu(null);
+            }}
+          >
+            全部加入并发输入
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              clearAllSync();
+              setCtxMenu(null);
+            }}
+          >
+            全部退出并发输入
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

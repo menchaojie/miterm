@@ -17,6 +17,8 @@ interface TerminalViewProps {
   focused: boolean;
   /** 分屏拖动等布局变化时递增，触发 resize */
   layoutEpoch?: number;
+  /** 终端字号（px） */
+  fontSize?: number;
   /** 自定义输入处理（并发同步输入） */
   onUserInput?: (data: string) => void;
   cursorStyle?: TerminalCursorStyle;
@@ -37,6 +39,7 @@ export function TerminalView({
   visible,
   focused,
   layoutEpoch = 0,
+  fontSize = 14,
   onUserInput,
   cursorStyle = "bar",
   cursorBlink = true,
@@ -63,6 +66,7 @@ export function TerminalView({
     onCwdChange,
     homeHint,
     initialCwd,
+    fontSize,
   );
 
   const interactive = status === "connected";

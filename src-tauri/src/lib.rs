@@ -24,6 +24,38 @@ struct AppState {
 }
 
 #[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let u = url.trim();
+    if !(u.starts_with("http://") || u.starts_with("https://")) {
+        return Err("仅支持 http(s) 链接".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", u])
+            .spawn()
+            .map_err(|e| format!("open url: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(u)
+            .spawn()
+            .map_err(|e| format!("open url: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(u)
+            .spawn()
+            .map_err(|e| format!("open url: {e}"))?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
 async fn ssh_connect(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -309,6 +341,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            open_url,
             ssh_connect,
             local_connect,
             ssh_write,

@@ -1840,6 +1840,12 @@ body.split-sash-dragging .split-sash-horizontal {
   color: #8a97a4;
 }
 
+.session-ctx-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .session-ctx-menu button:hover {
   background: rgba(79, 195, 247, 0.16);
   color: #fff;
@@ -2178,7 +2184,7 @@ body.split-sash-dragging .split-sash-horizontal {
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   background: #161616;
   color: #d4d4d4;
-  z-index: 3;
+  z-index: 5;
 }
 
 .remote-file-resize {

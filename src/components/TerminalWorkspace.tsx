@@ -13,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { TerminalView, CURSOR_COLOR, CURSOR_DIM } from "./TerminalView";
 import { RemoteFilePanel } from "./RemoteFilePanel";
 import type { ConcurrentSyncControl } from "./ConcurrentWorkspace";
+import { getSessionTerminalSelection } from "../hooks/useSshTerminal";
 import type {
   FolderLayout,
   FolderSubTab,
@@ -46,12 +47,15 @@ interface TerminalWorkspaceProps {
   onReconnectSession?: (sessionId: string) => void;
   onCwdChange?: (sessionId: string, cwd: string | null) => void;
   onSyncControlChange?: (control: ConcurrentSyncControl | null) => void;
+  /** 终端字号（px） */
+  fontSize?: number;
 }
 
 type CtxMenu = {
   x: number;
   y: number;
   sessionId: string;
+  selection: string;
 };
 
 const CTX_MENU_PAD = 8;
@@ -264,6 +268,7 @@ export function TerminalWorkspace({
   onReconnectSession,
   onCwdChange,
   onSyncControlChange,
+  fontSize = 14,
 }: TerminalWorkspaceProps) {
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
@@ -446,8 +451,19 @@ export function TerminalWorkspace({
     e.preventDefault();
     e.stopPropagation();
     onSelectSession(sessionId);
-    const pos = clampCtxMenuPos(e.clientX, e.clientY, 200, 180);
-    setCtxMenu({ x: pos.x, y: pos.y, sessionId });
+    const selection = getSessionTerminalSelection(sessionId);
+    const pos = clampCtxMenuPos(e.clientX, e.clientY, 220, 320);
+    setCtxMenu({ x: pos.x, y: pos.y, sessionId, selection });
+  };
+
+  const copySelection = async (text: string) => {
+    const value = text.trimEnd();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const bumpLayout = useCallback(() => {
@@ -484,6 +500,7 @@ export function TerminalWorkspace({
               visible={visible}
               focused={visible && focused && !filesOpen}
               layoutEpoch={layoutEpoch}
+              fontSize={fontSize}
               cursorBlink={false}
               cursorStyle={
                 opts.paneSplit
@@ -564,10 +581,12 @@ export function TerminalWorkspace({
 
   const ctxTab = ctxMenu ? byId(ctxMenu.sessionId) : null;
   const canSplitCtx = ctxTab?.status === "connected";
+  const ctxSelection = ctxMenu?.selection?.trim() ? ctxMenu.selection : "";
   const ctxInSync = ctxMenu ? syncIds.has(ctxMenu.sessionId) : false;
   const ctxInLayout = ctxMenu
     ? layoutContainsSession(layout, ctxMenu.sessionId)
     : false;
+  const showCtxMenu = Boolean(ctxMenu && (canSplitCtx || ctxSelection));
 
   return (
     <div className="terminal-workspace">
@@ -600,105 +619,107 @@ export function TerminalWorkspace({
               </div>
             );
           })}
+
+          {workspaceActive ? (
+            <div className="solo-subtab-hit">
+              <div className="solo-subtab-chrome">
+                <div className="solo-subtabs" role="tablist" aria-label="二级会话">
+                  {subTabs.map((st, index) => {
+                    const selected = st.id === activeSubTabId;
+                    const leafIds = collectLayoutSessionIds(st.layout);
+                    const anyError = leafIds.some(
+                      (id) => byId(id)?.status === "error",
+                    );
+                    const anyConnecting = leafIds.some((id) => {
+                      const s = byId(id)?.status;
+                      return s === "connecting" || s === "reconnecting";
+                    });
+                    const paneCount = leafIds.length;
+                    const name =
+                      paneCount > 1
+                        ? `连接 ${index + 1}（${paneCount} 窗格）`
+                        : `连接 ${index + 1}`;
+                    return (
+                      <div
+                        key={st.id}
+                        className={`solo-subtab${selected ? " active" : ""}${
+                          anyError ? " error" : ""
+                        }${anyConnecting ? " connecting" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className="solo-subtab-label"
+                          role="tab"
+                          aria-selected={selected}
+                          title={name}
+                          aria-label={name}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectSubTab(st.id);
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <IconSession />
+                          <span className="solo-subtab-num">{index + 1}</span>
+                          {paneCount > 1 ? (
+                            <span className="solo-subtab-panes">
+                              {paneCount}
+                            </span>
+                          ) : null}
+                        </button>
+                        <button
+                          type="button"
+                          className="solo-subtab-close"
+                          title="关闭此二级会话"
+                          aria-label={`关闭 ${name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCloseSubTab(st.id);
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="solo-subtab-add"
+                    title="新建二级会话"
+                    aria-label="新建二级会话"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAddSession();
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    +
+                  </button>
+                </div>
+                {canBrowseFiles ? (
+                  <button
+                    type="button"
+                    className={`solo-subtab-files${filesOpen ? " active" : ""}`}
+                    title="远程文件 (SFTP) · Ctrl+Shift+E"
+                    aria-label="远程文件"
+                    aria-pressed={filesOpen}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFilesOpenChange(!filesOpen);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    文件
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      {workspaceActive ? (
-        <div className="solo-subtab-hit">
-          <div className="solo-subtab-chrome">
-            <div className="solo-subtabs" role="tablist" aria-label="二级会话">
-              {subTabs.map((st, index) => {
-                const selected = st.id === activeSubTabId;
-                const leafIds = collectLayoutSessionIds(st.layout);
-                const anyError = leafIds.some(
-                  (id) => byId(id)?.status === "error",
-                );
-                const anyConnecting = leafIds.some((id) => {
-                  const s = byId(id)?.status;
-                  return s === "connecting" || s === "reconnecting";
-                });
-                const paneCount = leafIds.length;
-                const name =
-                  paneCount > 1
-                    ? `连接 ${index + 1}（${paneCount} 窗格）`
-                    : `连接 ${index + 1}`;
-                return (
-                  <div
-                    key={st.id}
-                    className={`solo-subtab${selected ? " active" : ""}${
-                      anyError ? " error" : ""
-                    }${anyConnecting ? " connecting" : ""}`}
-                  >
-                    <button
-                      type="button"
-                      className="solo-subtab-label"
-                      role="tab"
-                      aria-selected={selected}
-                      title={name}
-                      aria-label={name}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectSubTab(st.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                    >
-                      <IconSession />
-                      <span className="solo-subtab-num">{index + 1}</span>
-                      {paneCount > 1 ? (
-                        <span className="solo-subtab-panes">{paneCount}</span>
-                      ) : null}
-                    </button>
-                    <button
-                      type="button"
-                      className="solo-subtab-close"
-                      title="关闭此二级会话"
-                      aria-label={`关闭 ${name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onCloseSubTab(st.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-              <button
-                type="button"
-                className="solo-subtab-add"
-                title="新建二级会话"
-                aria-label="新建二级会话"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAddSession();
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                +
-              </button>
-            </div>
-            {canBrowseFiles ? (
-              <button
-                type="button"
-                className={`solo-subtab-files${filesOpen ? " active" : ""}`}
-                title="远程文件 (SFTP) · Ctrl+Shift+E"
-                aria-label="远程文件"
-                aria-pressed={filesOpen}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onFilesOpenChange(!filesOpen);
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                文件
-              </button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
-      {ctxMenu && canSplitCtx ? (
+      {showCtxMenu && ctxMenu ? (
         <div
           ref={ctxMenuRef}
           className="session-ctx-menu"
@@ -706,64 +727,109 @@ export function TerminalWorkspace({
           role="menu"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <button
-            type="button"
-            role="menuitem"
-            className="session-ctx-menu-item"
-            onClick={() => {
-              onSplitSession(ctxMenu.sessionId, "vertical");
-              setCtxMenu(null);
-            }}
-          >
-            <span className="session-ctx-menu-icon" aria-hidden="true">
-              <IconSplitVertical />
-            </span>
-            <span className="session-ctx-menu-text">
-              <span className="session-ctx-menu-title">垂直分割</span>
-              <span className="session-ctx-menu-hint">左右分屏</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="session-ctx-menu-item"
-            onClick={() => {
-              onSplitSession(ctxMenu.sessionId, "horizontal");
-              setCtxMenu(null);
-            }}
-          >
-            <span className="session-ctx-menu-icon" aria-hidden="true">
-              <IconSplitHorizontal />
-            </span>
-            <span className="session-ctx-menu-text">
-              <span className="session-ctx-menu-title">水平分割</span>
-              <span className="session-ctx-menu-hint">上下分屏</span>
-            </span>
-          </button>
-          {splitMode && ctxInLayout ? (
+          {ctxSelection ? (
             <button
               type="button"
               role="menuitem"
               onClick={() => {
-                toggleSync(ctxMenu.sessionId);
+                void copySelection(ctxSelection);
                 setCtxMenu(null);
               }}
             >
-              {ctxInSync ? "退出并发输入" : "加入并发输入"}
+              复制
             </button>
           ) : null}
-          {splitMode ? (
-            <button
-              type="button"
-              role="menuitem"
-              className="danger"
-              onClick={() => {
-                onCloseSession(ctxMenu.sessionId);
-                setCtxMenu(null);
-              }}
-            >
-              关闭此窗格
-            </button>
+          {canSplitCtx ? (
+            <>
+              {ctxSelection ? (
+                <div className="session-ctx-menu-sep" role="separator" />
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                className="session-ctx-menu-item"
+                onClick={() => {
+                  onSplitSession(ctxMenu.sessionId, "vertical");
+                  setCtxMenu(null);
+                }}
+              >
+                <span className="session-ctx-menu-icon" aria-hidden="true">
+                  <IconSplitVertical />
+                </span>
+                <span className="session-ctx-menu-text">
+                  <span className="session-ctx-menu-title">垂直分割</span>
+                  <span className="session-ctx-menu-hint">左右分屏</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="session-ctx-menu-item"
+                onClick={() => {
+                  onSplitSession(ctxMenu.sessionId, "horizontal");
+                  setCtxMenu(null);
+                }}
+              >
+                <span className="session-ctx-menu-icon" aria-hidden="true">
+                  <IconSplitHorizontal />
+                </span>
+                <span className="session-ctx-menu-text">
+                  <span className="session-ctx-menu-title">水平分割</span>
+                  <span className="session-ctx-menu-hint">上下分屏</span>
+                </span>
+              </button>
+              {splitMode && ctxInLayout ? (
+                <>
+                  <div className="session-ctx-menu-sep" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      toggleSync(ctxMenu.sessionId);
+                      setCtxMenu(null);
+                    }}
+                  >
+                    {ctxInSync ? "退出并发输入" : "加入并发输入"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      selectAllSync();
+                      setCtxMenu(null);
+                    }}
+                  >
+                    全部加入并发输入
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      clearAllSync();
+                      setCtxMenu(null);
+                    }}
+                  >
+                    全部退出并发输入
+                  </button>
+                </>
+              ) : null}
+              {splitMode ? (
+                <>
+                  <div className="session-ctx-menu-sep" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="danger"
+                    onClick={() => {
+                      onCloseSession(ctxMenu.sessionId);
+                      setCtxMenu(null);
+                    }}
+                  >
+                    关闭此窗格
+                  </button>
+                </>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}

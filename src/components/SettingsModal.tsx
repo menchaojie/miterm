@@ -6,6 +6,10 @@ import {
   DEFAULT_SHORTCUTS,
   SETTINGS_TABS,
   SHORTCUT_ACTIONS,
+  TERMINAL_FONT_SIZE_DEFAULT,
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
+  clampTerminalFontSize,
   findShortcutConflict,
   formatShortcut,
   shortcutFromEvent,
@@ -183,6 +187,61 @@ export function SettingsModal({
                     }));
                   }}
                 />
+              </label>
+            </section>
+          ) : null}
+
+          {activeTab === "connection" ? (
+            <section className="settings-section">
+              <p className="settings-section-title">终端外观</p>
+              <p className="settings-hint">
+                仅缩放终端字体（不影响 Tab、侧栏等界面）。默认字号{" "}
+                {TERMINAL_FONT_SIZE_DEFAULT}px，范围{" "}
+                {TERMINAL_FONT_SIZE_MIN}～{TERMINAL_FONT_SIZE_MAX}。
+              </p>
+              <label className="settings-check-row">
+                <input
+                  type="checkbox"
+                  checked={draft.ctrlWheelZoom}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      ctrlWheelZoom: e.target.checked,
+                    }))
+                  }
+                />
+                <span>启用 Ctrl + 滚轮缩放终端字体</span>
+              </label>
+              <label className="settings-field-row">
+                <span className="settings-field-label">终端字号 (px)</span>
+                <input
+                  type="number"
+                  className="settings-number-input"
+                  min={TERMINAL_FONT_SIZE_MIN}
+                  max={TERMINAL_FONT_SIZE_MAX}
+                  value={draft.terminalFontSize}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    setDraft((d) => ({
+                      ...d,
+                      terminalFontSize: Number.isFinite(n)
+                        ? clampTerminalFontSize(n)
+                        : d.terminalFontSize,
+                    }));
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() =>
+                    setDraft((d) => ({
+                      ...d,
+                      terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
+                    }))
+                  }
+                >
+                  重置
+                </button>
               </label>
             </section>
           ) : (
