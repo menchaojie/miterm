@@ -49,6 +49,10 @@ export type AppSettings = {
   autoReconnect: boolean;
   /** 自动重连最大次数 */
   autoReconnectMaxAttempts: number;
+  /** Ctrl/Cmd + 滚轮缩放终端字体 */
+  ctrlWheelZoom: boolean;
+  /** 终端字号（px），全局共用 */
+  terminalFontSize: number;
 };
 
 export const LOCAL_SHELL_OPTIONS: {
@@ -184,10 +188,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
   shortcuts: { ...DEFAULT_SHORTCUTS },
   autoReconnect: true,
   autoReconnectMaxAttempts: 5,
+  ctrlWheelZoom: true,
+  terminalFontSize: 14,
 };
 
 export const AUTO_RECONNECT_MAX_ATTEMPTS_MIN = 1;
 export const AUTO_RECONNECT_MAX_ATTEMPTS_MAX = 20;
+
+export const TERMINAL_FONT_SIZE_DEFAULT = 14;
+export const TERMINAL_FONT_SIZE_MIN = 10;
+export const TERMINAL_FONT_SIZE_MAX = 28;
+
+export function clampTerminalFontSize(n: unknown): number {
+  const v = typeof n === "number" && Number.isFinite(n) ? Math.round(n) : NaN;
+  if (!Number.isFinite(v)) return TERMINAL_FONT_SIZE_DEFAULT;
+  return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, v));
+}
 
 export function normalizeKey(key: string): string {
   if (key === " ") return "space";
@@ -346,6 +362,11 @@ export function loadSettings(): AppSettings {
       autoReconnectMaxAttempts: clampReconnectAttempts(
         parsed.autoReconnectMaxAttempts,
       ),
+      ctrlWheelZoom:
+        typeof parsed.ctrlWheelZoom === "boolean"
+          ? parsed.ctrlWheelZoom
+          : DEFAULT_SETTINGS.ctrlWheelZoom,
+      terminalFontSize: clampTerminalFontSize(parsed.terminalFontSize),
     };
     if (fromLegacy) {
       saveSettings(settings);
