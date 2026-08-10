@@ -39,12 +39,15 @@ import {
   newGroupId,
   newSessionId,
   newSubTabId,
+  concurrentGridDims,
   type FolderSubTab,
 } from "./types";
 import {
   collectLayoutSessionIds,
   collectSubTabsSessionIds,
   ensureFolderLayout,
+  findNeighborInGrid,
+  findNeighborSessionId,
   layoutContainsSession,
   leafLayout,
   mapSubTabLayout,
@@ -52,6 +55,7 @@ import {
   setSplitRatio,
   splitLeaf,
   quadSplitLeaf,
+  type PaneNavDirection,
 } from "./splitLayout";
 import { isRestorableCwd, shellSingleQuote, guessUnixHome } from "./cwd";
 import {
@@ -210,9 +214,11 @@ function App() {
   const settingsRef = useRef(settings);
   const savedHostsRef = useRef(savedHosts);
   const sessionTabsRef = useRef(sessionTabs);
+  const syncControlRef = useRef(syncControl);
   settingsRef.current = settings;
   savedHostsRef.current = savedHosts;
   sessionTabsRef.current = sessionTabs;
+  syncControlRef.current = syncControl;
 
   const onHostsTab = activeTabId === HOSTS_TAB_ID;
   const activeGroup = useMemo(
@@ -1492,36 +1498,57 @@ function App() {
           }));
           return;
         }
+        if (kind === "toggleAllSync") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.repeat) return;
+          const control = syncControlRef.current;
+          if (!control) return;
+          if (control.allSynced) control.clearAll();
+          else control.selectAll();
+          return;
+        }
         if (
-          kind === "focusPane1" ||
-          kind === "focusPane2" ||
-          kind === "focusPane3" ||
-          kind === "focusPane4"
+          kind === "focusPaneLeft" ||
+          kind === "focusPaneRight" ||
+          kind === "focusPaneUp" ||
+          kind === "focusPaneDown"
         ) {
           e.preventDefault();
           e.stopPropagation();
-          const paneIndex =
-            kind === "focusPane1"
-              ? 0
-              : kind === "focusPane2"
-                ? 1
-                : kind === "focusPane3"
-                  ? 2
-                  : 3;
+          const direction: PaneNavDirection =
+            kind === "focusPaneLeft"
+              ? "left"
+              : kind === "focusPaneRight"
+                ? "right"
+                : kind === "focusPaneUp"
+                  ? "up"
+                  : "down";
           if (activeGroup) {
             const paneIds = activeGroup.sessionIds.filter((id) =>
               sessionTabs.some((t) => t.id === id),
             );
-            const target = paneIds[paneIndex];
+            if (paneIds.length === 0) return;
+            const cur =
+              activeGroup.focusedSessionId &&
+              paneIds.includes(activeGroup.focusedSessionId)
+                ? activeGroup.focusedSessionId
+                : paneIds[0];
+            const { cols } = concurrentGridDims(paneIds.length);
+            const target = findNeighborInGrid(
+              paneIds,
+              cur,
+              direction,
+              cols,
+            );
             if (target) focusSessionInGroup(activeGroup.id, target);
             return;
           }
           if (activeFolder) {
             const folder = normalizeHostFolder(activeFolder);
-            const paneIds = collectLayoutSessionIds(
-              getActiveSubTab(folder).layout,
-            );
-            const target = paneIds[paneIndex];
+            const layout = getActiveSubTab(folder).layout;
+            const cur = folder.activeSessionId;
+            const target = findNeighborSessionId(layout, cur, direction);
             if (target) focusSessionInFolder(folder.id, target);
             return;
           }

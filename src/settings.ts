@@ -16,10 +16,11 @@ export type ShortcutActionId =
   | "nextTab"
   | "previousPane"
   | "nextPane"
-  | "focusPane1"
-  | "focusPane2"
-  | "focusPane3"
-  | "focusPane4"
+  | "focusPaneLeft"
+  | "focusPaneRight"
+  | "focusPaneUp"
+  | "focusPaneDown"
+  | "toggleAllSync"
   | "hostsTab"
   | "tab2"
   | "tab3"
@@ -148,24 +149,30 @@ export const SHORTCUT_ACTIONS: {
     tab: "shortcutsPane",
   },
   {
-    id: "focusPane1",
-    label: "聚焦第 1 窗格",
-    hint: "当前分屏或并发组内",
+    id: "focusPaneLeft",
+    label: "聚焦左侧窗格",
+    hint: "按布局方向移动焦点",
     tab: "shortcutsPane",
   },
   {
-    id: "focusPane2",
-    label: "聚焦第 2 窗格",
+    id: "focusPaneRight",
+    label: "聚焦右侧窗格",
     tab: "shortcutsPane",
   },
   {
-    id: "focusPane3",
-    label: "聚焦第 3 窗格",
+    id: "focusPaneUp",
+    label: "聚焦上方窗格",
     tab: "shortcutsPane",
   },
   {
-    id: "focusPane4",
-    label: "聚焦第 4 窗格",
+    id: "focusPaneDown",
+    label: "聚焦下方窗格",
+    tab: "shortcutsPane",
+  },
+  {
+    id: "toggleAllSync",
+    label: "全部加入/退出并发输入",
+    hint: "在分屏或并发组内交替：全选 ↔ 全部取消",
     tab: "shortcutsPane",
   },
   {
@@ -197,10 +204,11 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   nextTab: binding("tab", { ctrl: true }),
   previousPane: binding("[", { ctrl: true, shift: true }),
   nextPane: binding("]", { ctrl: true, shift: true }),
-  focusPane1: binding("1", { ctrl: true, alt: true }),
-  focusPane2: binding("2", { ctrl: true, alt: true }),
-  focusPane3: binding("3", { ctrl: true, alt: true }),
-  focusPane4: binding("4", { ctrl: true, alt: true }),
+  focusPaneLeft: binding("arrowleft", { ctrl: true, alt: true }),
+  focusPaneRight: binding("arrowright", { ctrl: true, alt: true }),
+  focusPaneUp: binding("arrowup", { ctrl: true, alt: true }),
+  focusPaneDown: binding("arrowdown", { ctrl: true, alt: true }),
+  toggleAllSync: binding("space", { ctrl: true, shift: true }),
   hostsTab: binding("1", { ctrl: true }),
   tab2: binding("2", { ctrl: true }),
   tab3: binding("3", { ctrl: true }),
@@ -308,6 +316,12 @@ export function matchShortcut(
   if (e.metaKey !== binding.meta) return false;
   if (normalizeKey(e.key) === binding.key) return true;
   if (binding.key === "tab" && e.code === "Tab") return true;
+  if (
+    (binding.key === "space" || binding.key === " ") &&
+    (e.code === "Space" || e.key === " " || e.key === "Spacebar")
+  ) {
+    return true;
+  }
   // Ctrl+Shift+[ ] 时 key 常为 { }，用物理键码匹配
   if (
     binding.key === "[" &&
@@ -435,10 +449,11 @@ export function tabIndexForAction(
   | "prevPane"
   | "nextPane"
   | "toggleFiles"
-  | "focusPane1"
-  | "focusPane2"
-  | "focusPane3"
-  | "focusPane4" {
+  | "focusPaneLeft"
+  | "focusPaneRight"
+  | "focusPaneUp"
+  | "focusPaneDown"
+  | "toggleAllSync" {
   switch (action) {
     case "previousTab":
       return "prev";
@@ -448,14 +463,16 @@ export function tabIndexForAction(
       return "prevPane";
     case "nextPane":
       return "nextPane";
-    case "focusPane1":
-      return "focusPane1";
-    case "focusPane2":
-      return "focusPane2";
-    case "focusPane3":
-      return "focusPane3";
-    case "focusPane4":
-      return "focusPane4";
+    case "focusPaneLeft":
+      return "focusPaneLeft";
+    case "focusPaneRight":
+      return "focusPaneRight";
+    case "focusPaneUp":
+      return "focusPaneUp";
+    case "focusPaneDown":
+      return "focusPaneDown";
+    case "toggleAllSync":
+      return "toggleAllSync";
     case "toggleRemoteFiles":
       return "toggleFiles";
     case "hostsTab":

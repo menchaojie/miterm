@@ -232,6 +232,20 @@ export function useSshTerminal(
       }
       // 默认打开/关闭远程文件；交给窗口级快捷键处理，避免写入 PTY
       if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyE") return false;
+      // Ctrl+Shift+Space：全部加入/退出并发，不写入 PTY
+      if (ev.ctrlKey && ev.shiftKey && ev.code === "Space") return false;
+      // Ctrl+Alt+方向键：交给应用窗格导航，不写入 PTY
+      if (
+        ev.ctrlKey &&
+        ev.altKey &&
+        !ev.metaKey &&
+        (ev.code === "ArrowLeft" ||
+          ev.code === "ArrowRight" ||
+          ev.code === "ArrowUp" ||
+          ev.code === "ArrowDown")
+      ) {
+        return false;
+      }
       if (
         ev.ctrlKey &&
         !ev.altKey &&
