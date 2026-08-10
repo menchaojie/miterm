@@ -189,6 +189,22 @@ function IconFile() {
   );
 }
 
+/** 在资源管理器中打开/定位 */
+function IconReveal() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M1.75 3.5A1.75 1.75 0 0 1 3.5 1.75h2.9c.4 0 .78.14 1.08.4l.7.6h4.32c.97 0 1.75.78 1.75 1.75v.75H2.5v5.75c0 .55.45 1 1 1h9c.55 0 1-.45 1-1V8.5h1.5v2.75A2.5 2.5 0 0 1 12.5 13.75h-9A2.5 2.5 0 0 1 1 11.25V3.5zm11.5 1.5V4.5a.25.25 0 0 0-.25-.25H9.18l-.7-.6a.25.25 0 0 0-.16-.06H3.5a.25.25 0 0 0-.25.25v1.16h10z"
+      />
+      <path
+        fill="currentColor"
+        d="M11.25 7.25a.75.75 0 0 1 .75-.75h2.25a.75.75 0 0 1 0 1.5h-.44l1.22 1.22a.75.75 0 1 1-1.06 1.06L12.75 9.06v.44a.75.75 0 0 1-1.5 0V7.25z"
+      />
+    </svg>
+  );
+}
+
 type ChildrenCache = Record<string, SftpEntry[]>;
 
 export function RemoteFilePanel({
@@ -214,8 +230,11 @@ export function RemoteFilePanel({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<SftpProgressEvent | null>(null);
-  /** 最近一次成功下载的本地路径（文件或目录），用于「打开目录」 */
-  const [lastDownloadPath, setLastDownloadPath] = useState<string | null>(null);
+  /** 远程路径 → 本机保存路径（下载成功后行内「已下载」可打开） */
+  const [downloadedLocal, setDownloadedLocal] = useState<
+    Record<string, string>
+  >({});
+  const progressClearTimer = useRef<number | null>(null);
   const [followTerminal, setFollowTerminal] = useState(loadFollowTerminal);
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -370,15 +389,27 @@ export function RemoteFilePanel({
     let unlisten: (() => void) | undefined;
     void listen<SftpProgressEvent>("sftp-progress", (event) => {
       if (event.payload.sessionId !== sessionId) return;
+      if (progressClearTimer.current != null) {
+        window.clearTimeout(progressClearTimer.current);
+        progressClearTimer.current = null;
+      }
       setProgress(event.payload);
-      if (event.payload.done && !event.payload.error) {
-        window.setTimeout(() => setProgress(null), 1500);
+      // 完成后短暂展示 100% 再收起，打开入口改挂在文件行「已下载」
+      if (event.payload.done) {
+        progressClearTimer.current = window.setTimeout(() => {
+          setProgress(null);
+          progressClearTimer.current = null;
+        }, 500);
       }
     }).then((fn) => {
       unlisten = fn;
     });
     return () => {
       unlisten?.();
+      if (progressClearTimer.current != null) {
+        window.clearTimeout(progressClearTimer.current);
+        progressClearTimer.current = null;
+      }
     };
   }, [sessionId]);
 
@@ -620,7 +651,12 @@ export function RemoteFilePanel({
     if (!connected || busy) return;
     setBusy(true);
     setError("");
-    setLastDownloadPath(null);
+    setDownloadedLocal((prev) => {
+      if (!(entry.path in prev)) return prev;
+      const next = { ...prev };
+      delete next[entry.path];
+      return next;
+    });
     try {
       const local = entry.isDir
         ? await invoke<string | null>("sftp_download_dir", {
@@ -629,23 +665,61 @@ export function RemoteFilePanel({
         : await invoke<string | null>("sftp_download", {
             params: { sessionId, remotePath: entry.path },
           });
-      if (local) setLastDownloadPath(local);
+      if (local) {
+        setDownloadedLocal((prev) => ({ ...prev, [entry.path]: local }));
+      }
     } catch (e) {
       setError(String(e));
-      setLastDownloadPath(null);
     } finally {
       setBusy(false);
     }
   };
 
-  const openDownloadLocation = async () => {
-    const path = lastDownloadPath?.trim();
+  const openDownloadLocation = async (localPath: string) => {
+    const path = localPath.trim();
     if (!path) return;
     try {
       await invoke("reveal_path", { path });
     } catch (e) {
       setError(String(e));
     }
+  };
+
+  const renderDownloadActions = (
+    entry: SftpEntry,
+    downloadTitle: string,
+  ) => {
+    const local = downloadedLocal[entry.path];
+    return (
+      <span className="remote-file-dl-actions">
+        {local ? (
+          <button
+            type="button"
+            className="remote-file-downloaded"
+            title={`已下载到：${local}\n点击在资源管理器中打开`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void openDownloadLocation(local);
+            }}
+          >
+            <IconReveal />
+            <span>已下载</span>
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="remote-file-dl"
+          title={downloadTitle}
+          disabled={!connected || busy}
+          onClick={(e) => {
+            e.stopPropagation();
+            void onDownload(entry);
+          }}
+        >
+          下载
+        </button>
+      </span>
+    );
   };
 
   const pct =
@@ -711,22 +785,12 @@ export function RemoteFilePanel({
               </span>
             ) : null}
 
-            <button
-              type="button"
-              className="remote-file-dl"
-              title={
-                entry.isDir
-                  ? "下载整个文件夹到本地"
-                  : `下载到本地（${formatMtime(entry.mtime)}）`
-              }
-              disabled={!connected || busy}
-              onClick={(e) => {
-                e.stopPropagation();
-                void onDownload(entry);
-              }}
-            >
-              下载
-            </button>
+            {renderDownloadActions(
+              entry,
+              entry.isDir
+                ? "下载整个文件夹到本地"
+                : `下载到本地（${formatMtime(entry.mtime)}）`,
+            )}
           </div>
 
           {entry.isDir && isOpen ? (
@@ -945,27 +1009,13 @@ export function RemoteFilePanel({
 
       {progress ? (
         <div className="remote-file-progress">
-          <div className="remote-file-progress-top">
-            <div className="remote-file-progress-label">
-              {progress.direction === "upload" ? "上传" : "下载"}{" "}
-              {progress.done ? "完成" : "中…"}
-              {pct != null ? ` ${pct}%` : ""}
-              {progress.fileCount && progress.fileCount > 0
-                ? ` · ${progress.fileIndex ?? 0}/${progress.fileCount} 个文件`
-                : ""}
-            </div>
-            {progress.done &&
-            progress.direction === "download" &&
-            lastDownloadPath ? (
-              <button
-                type="button"
-                className="remote-file-reveal-btn"
-                title={lastDownloadPath}
-                onClick={() => void openDownloadLocation()}
-              >
-                打开目录
-              </button>
-            ) : null}
+          <div className="remote-file-progress-label">
+            {progress.direction === "upload" ? "上传" : "下载"}{" "}
+            {progress.done ? "完成" : "中…"}
+            {pct != null ? ` ${pct}%` : ""}
+            {progress.fileCount && progress.fileCount > 0
+              ? ` · ${progress.fileIndex ?? 0}/${progress.fileCount} 个文件`
+              : ""}
           </div>
           <div className="remote-file-progress-track">
             <div
@@ -1009,26 +1059,18 @@ export function RemoteFilePanel({
           <span className="remote-file-tree-name is-root-name">
             {basename(rootPath)}
           </span>
-          {rootPath !== "/" ? (
-            <button
-              type="button"
-              className="remote-file-dl"
-              title="下载当前文件夹到本地"
-              disabled={!connected || busy}
-              onClick={(e) => {
-                e.stopPropagation();
-                void onDownload({
+          {rootPath !== "/"
+            ? renderDownloadActions(
+                {
                   name: basename(rootPath),
                   path: rootPath,
                   isDir: true,
                   size: 0,
                   mtime: 0,
-                });
-              }}
-            >
-              下载
-            </button>
-          ) : null}
+                },
+                "下载当前文件夹到本地",
+              )
+            : null}
         </div>
 
         {bootLoading && rootEntries.length === 0 ? (
