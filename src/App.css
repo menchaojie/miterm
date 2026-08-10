@@ -2699,10 +2699,36 @@ body.remote-file-resizing * {
   padding: 0 8px 8px;
 }
 
+.remote-file-progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
 .remote-file-progress-label {
   font-size: 11px;
   color: #b8c8d4;
-  margin-bottom: 4px;
+  min-width: 0;
+}
+
+.remote-file-reveal-btn {
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(79, 195, 247, 0.35);
+  border-radius: 4px;
+  background: rgba(79, 195, 247, 0.12);
+  color: #c8eefc;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.remote-file-reveal-btn:hover {
+  border-color: rgba(79, 195, 247, 0.55);
+  background: rgba(79, 195, 247, 0.22);
+  color: #fff;
 }
 
 .remote-file-progress-track {

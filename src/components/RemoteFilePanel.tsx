@@ -214,6 +214,8 @@ export function RemoteFilePanel({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<SftpProgressEvent | null>(null);
+  /** 最近一次成功下载的本地路径（文件或目录），用于「打开目录」 */
+  const [lastDownloadPath, setLastDownloadPath] = useState<string | null>(null);
   const [followTerminal, setFollowTerminal] = useState(loadFollowTerminal);
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -618,20 +620,31 @@ export function RemoteFilePanel({
     if (!connected || busy) return;
     setBusy(true);
     setError("");
+    setLastDownloadPath(null);
     try {
-      if (entry.isDir) {
-        await invoke<string | null>("sftp_download_dir", {
-          params: { sessionId, remotePath: entry.path },
-        });
-      } else {
-        await invoke<string | null>("sftp_download", {
-          params: { sessionId, remotePath: entry.path },
-        });
-      }
+      const local = entry.isDir
+        ? await invoke<string | null>("sftp_download_dir", {
+            params: { sessionId, remotePath: entry.path },
+          })
+        : await invoke<string | null>("sftp_download", {
+            params: { sessionId, remotePath: entry.path },
+          });
+      if (local) setLastDownloadPath(local);
     } catch (e) {
       setError(String(e));
+      setLastDownloadPath(null);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const openDownloadLocation = async () => {
+    const path = lastDownloadPath?.trim();
+    if (!path) return;
+    try {
+      await invoke("reveal_path", { path });
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -932,13 +945,27 @@ export function RemoteFilePanel({
 
       {progress ? (
         <div className="remote-file-progress">
-          <div className="remote-file-progress-label">
-            {progress.direction === "upload" ? "上传" : "下载"}{" "}
-            {progress.done ? "完成" : "中…"}
-            {pct != null ? ` ${pct}%` : ""}
-            {progress.fileCount && progress.fileCount > 0
-              ? ` · ${progress.fileIndex ?? 0}/${progress.fileCount} 个文件`
-              : ""}
+          <div className="remote-file-progress-top">
+            <div className="remote-file-progress-label">
+              {progress.direction === "upload" ? "上传" : "下载"}{" "}
+              {progress.done ? "完成" : "中…"}
+              {pct != null ? ` ${pct}%` : ""}
+              {progress.fileCount && progress.fileCount > 0
+                ? ` · ${progress.fileIndex ?? 0}/${progress.fileCount} 个文件`
+                : ""}
+            </div>
+            {progress.done &&
+            progress.direction === "download" &&
+            lastDownloadPath ? (
+              <button
+                type="button"
+                className="remote-file-reveal-btn"
+                title={lastDownloadPath}
+                onClick={() => void openDownloadLocation()}
+              >
+                打开目录
+              </button>
+            ) : null}
           </div>
           <div className="remote-file-progress-track">
             <div

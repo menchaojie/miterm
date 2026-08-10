@@ -55,6 +55,76 @@ fn open_url(url: String) -> Result<(), String> {
     }
 }
 
+/// 在系统文件管理器中打开路径：文件则定位选中，目录则打开该夹。
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    use std::path::{Component, PathBuf};
+
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err("路径为空".into());
+    }
+    let p = PathBuf::from(raw);
+    if !p.is_absolute() {
+        return Err("仅支持绝对路径".into());
+    }
+    // 拒绝可疑组件（避免奇怪相对段）
+    for c in p.components() {
+        if matches!(c, Component::ParentDir) {
+            return Err("非法路径".into());
+        }
+    }
+    if !p.exists() {
+        return Err(format!("路径不存在：{raw}"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if p.is_file() {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", p.to_string_lossy()))
+                .spawn()
+                .map_err(|e| format!("reveal path: {e}"))?;
+        } else {
+            std::process::Command::new("explorer")
+                .arg(p.as_os_str())
+                .spawn()
+                .map_err(|e| format!("reveal path: {e}"))?;
+        }
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if p.is_file() {
+            std::process::Command::new("open")
+                .args(["-R", &p.to_string_lossy()])
+                .spawn()
+                .map_err(|e| format!("reveal path: {e}"))?;
+        } else {
+            std::process::Command::new("open")
+                .arg(p.as_os_str())
+                .spawn()
+                .map_err(|e| format!("reveal path: {e}"))?;
+        }
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let target = if p.is_file() {
+            p.parent()
+                .map(|x| x.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("/"))
+        } else {
+            p
+        };
+        std::process::Command::new("xdg-open")
+            .arg(target.as_os_str())
+            .spawn()
+            .map_err(|e| format!("reveal path: {e}"))?;
+        Ok(())
+    }
+}
+
 #[tauri::command]
 async fn ssh_connect(
     app: AppHandle,
@@ -380,6 +450,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_url,
+            reveal_path,
             ssh_connect,
             local_connect,
             ssh_write,
