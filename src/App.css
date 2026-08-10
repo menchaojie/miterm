@@ -187,6 +187,18 @@ a,
   color: #fff;
 }
 
+.btn-secondary.is-active {
+  border-color: rgba(79, 195, 247, 0.45);
+  background: rgba(79, 195, 247, 0.14);
+  color: #e8f6fc;
+}
+
+.btn-secondary.is-active:hover:not(:disabled) {
+  border-color: rgba(79, 195, 247, 0.6);
+  background: rgba(79, 195, 247, 0.22);
+  color: #fff;
+}
+
 .btn-danger-text {
   border: 1px solid transparent;
   background: transparent;

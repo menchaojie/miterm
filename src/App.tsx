@@ -1714,6 +1714,13 @@ function App() {
                 onEdit={openEdit}
                 onDelete={handleDelete}
                 onConcurrentConnect={handleConcurrentConnect}
+                sidebarOpen={Boolean(remoteFilesOpenMap[HOSTS_TAB_ID])}
+                onToggleSidebar={() =>
+                  setRemoteFilesOpenMap((prev) => ({
+                    ...prev,
+                    [HOSTS_TAB_ID]: !Boolean(prev[HOSTS_TAB_ID]),
+                  }))
+                }
               />
             </div>
           </div>

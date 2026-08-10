@@ -24,6 +24,10 @@ interface HostListPageProps {
   onDelete: (host: SavedHost) => void;
   /** 勾选多台后并发连接（同屏格子） */
   onConcurrentConnect: (hosts: SavedHost[]) => void;
+  /** 主机列表侧栏（工作区）是否打开 */
+  sidebarOpen?: boolean;
+  /** 开关侧栏（默认显示工作区 Tab） */
+  onToggleSidebar?: () => void;
 }
 
 function formatTime(unixSec: number): string {
@@ -94,6 +98,8 @@ export function HostListPage({
   onEdit,
   onDelete,
   onConcurrentConnect,
+  sidebarOpen = false,
+  onToggleSidebar,
 }: HostListPageProps) {
   const busy = status === "connecting";
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
@@ -153,6 +159,18 @@ export function HostListPage({
           </p>
         </div>
         <div className="host-list-header-actions">
+          {onToggleSidebar ? (
+            <button
+              type="button"
+              className={`btn-secondary${sidebarOpen ? " is-active" : ""}`}
+              disabled={busy}
+              title="打开/关闭工作区侧栏（收藏会话）· Ctrl+Shift+E"
+              aria-pressed={sidebarOpen}
+              onClick={onToggleSidebar}
+            >
+              收藏会话
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn-secondary"
