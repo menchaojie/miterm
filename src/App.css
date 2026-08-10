@@ -2920,6 +2920,13 @@ body.remote-file-resizing * {
   margin-left: 4px;
 }
 
+.remote-file-downloaded-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  max-width: 100%;
+}
+
 .remote-file-downloaded {
   display: inline-flex;
   align-items: center;
@@ -2937,6 +2944,37 @@ body.remote-file-resizing * {
 .remote-file-downloaded:hover {
   color: #9fd4a8;
   background: rgba(120, 180, 130, 0.14);
+}
+
+.remote-file-downloaded-clear {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-left: 0;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: transparent;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.remote-file-downloaded-wrap:hover .remote-file-downloaded-clear,
+.remote-file-tree-row:hover .remote-file-downloaded-clear,
+.remote-file-tree-row.is-selected .remote-file-downloaded-clear {
+  color: #8a9a8e;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.remote-file-downloaded-clear:hover {
+  color: #e8a0a0 !important;
+  background: rgba(200, 100, 100, 0.16);
 }
 
 .remote-file-dl {

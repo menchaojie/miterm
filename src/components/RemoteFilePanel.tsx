@@ -675,13 +675,31 @@ export function RemoteFilePanel({
     }
   };
 
-  const openDownloadLocation = async (localPath: string) => {
+  const clearDownloadedMark = (remotePath: string) => {
+    setDownloadedLocal((prev) => {
+      if (!(remotePath in prev)) return prev;
+      const next = { ...prev };
+      delete next[remotePath];
+      return next;
+    });
+  };
+
+  const openDownloadLocation = async (
+    remotePath: string,
+    localPath: string,
+  ) => {
     const path = localPath.trim();
     if (!path) return;
     try {
       await invoke("reveal_path", { path });
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      if (msg.includes("路径不存在")) {
+        clearDownloadedMark(remotePath);
+        setError("本地文件已不存在，已清除「已下载」标记");
+      } else {
+        setError(msg);
+      }
     }
   };
 
@@ -693,18 +711,33 @@ export function RemoteFilePanel({
     return (
       <span className="remote-file-dl-actions">
         {local ? (
-          <button
-            type="button"
-            className="remote-file-downloaded"
-            title={`已下载到：${local}\n点击在资源管理器中打开`}
-            onClick={(e) => {
-              e.stopPropagation();
-              void openDownloadLocation(local);
-            }}
-          >
-            <IconReveal />
-            <span>已下载</span>
-          </button>
+          <span className="remote-file-downloaded-wrap">
+            <button
+              type="button"
+              className="remote-file-downloaded"
+              title={`已下载到：${local}\n点击在资源管理器中打开`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void openDownloadLocation(entry.path, local);
+              }}
+            >
+              <IconReveal />
+              <span>已下载</span>
+            </button>
+            <button
+              type="button"
+              className="remote-file-downloaded-clear"
+              title="清除「已下载」标记（不删除本机文件）"
+              aria-label="清除已下载标记"
+              onClick={(e) => {
+                e.stopPropagation();
+                clearDownloadedMark(entry.path);
+                setError("");
+              }}
+            >
+              ×
+            </button>
+          </span>
         ) : null}
         <button
           type="button"
