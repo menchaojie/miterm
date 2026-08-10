@@ -323,6 +323,18 @@ export function ConcurrentWorkspace({
     }
   };
 
+  const pasteFromClipboard = async (sessionId: string) => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+      handleUserInput(sessionId, text);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const ctxTab = ctxMenu ? byId(ctxMenu.sessionId) : null;
+  const canPasteCtx = ctxTab?.status === "connected";
   const ctxInSync = ctxMenu ? syncIds.has(ctxMenu.sessionId) : false;
   const ctxSelection = ctxMenu?.selection?.trim() ? ctxMenu.selection : "";
 
@@ -518,7 +530,19 @@ export function ConcurrentWorkspace({
               复制
             </button>
           ) : null}
-          {ctxSelection ? (
+          {canPasteCtx ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void pasteFromClipboard(ctxMenu.sessionId);
+                setCtxMenu(null);
+              }}
+            >
+              粘贴
+            </button>
+          ) : null}
+          {ctxSelection || canPasteCtx ? (
             <div className="session-ctx-menu-sep" role="separator" />
           ) : null}
           <button

@@ -555,6 +555,16 @@ export function TerminalWorkspace({
     }
   };
 
+  const pasteFromClipboard = async (sessionId: string) => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+      handleUserInput(sessionId, text);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const bumpLayout = useCallback(() => {
     setLayoutEpoch((n) => n + 1);
   }, []);
@@ -670,12 +680,15 @@ export function TerminalWorkspace({
 
   const ctxTab = ctxMenu ? byId(ctxMenu.sessionId) : null;
   const canSplitCtx = ctxTab?.status === "connected";
+  const canPasteCtx = canSplitCtx;
   const ctxSelection = ctxMenu?.selection?.trim() ? ctxMenu.selection : "";
   const ctxInSync = ctxMenu ? syncIds.has(ctxMenu.sessionId) : false;
   const ctxInLayout = ctxMenu
     ? layoutContainsSession(layout, ctxMenu.sessionId)
     : false;
-  const showCtxMenu = Boolean(ctxMenu && (canSplitCtx || ctxSelection));
+  const showCtxMenu = Boolean(
+    ctxMenu && (canSplitCtx || ctxSelection || canPasteCtx),
+  );
 
   return (
     <div className="terminal-workspace">
@@ -836,9 +849,21 @@ export function TerminalWorkspace({
               复制
             </button>
           ) : null}
+          {canPasteCtx ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                void pasteFromClipboard(ctxMenu.sessionId);
+                setCtxMenu(null);
+              }}
+            >
+              粘贴
+            </button>
+          ) : null}
           {canSplitCtx ? (
             <>
-              {ctxSelection ? (
+              {ctxSelection || canPasteCtx ? (
                 <div className="session-ctx-menu-sep" role="separator" />
               ) : null}
               <button
