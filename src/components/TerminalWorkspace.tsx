@@ -22,6 +22,7 @@ import type {
 } from "../types";
 import type { SavedWorkspaceRow, WorkspacePayload } from "../workspace";
 import { guessUnixHome } from "../cwd";
+import { commandTextForInject } from "../savedCommands";
 import {
   collectLayoutSessionIds,
   countLayoutLeaves,
@@ -488,10 +489,21 @@ export function TerminalWorkspace({
     }
   }, []);
 
+  const injectSavedCommand = useCallback(
+    (body: string, opts: { run: boolean }) => {
+      const tab = sessionsRef.current.find((t) => t.id === activeSessionId);
+      if (!tab || tab.status !== "connected") return;
+      handleUserInput(tab.id, commandTextForInject(body, opts.run));
+    },
+    [activeSessionId, handleUserInput],
+  );
+
   const canBrowseFiles =
     Boolean(activeTab) &&
     activeTab?.kind !== "local" &&
     activeTab?.status === "connected";
+
+  const canInjectCommand = activeTab?.status === "connected";
 
   const filesInitialPath =
     activeTab?.cwd ||
@@ -683,6 +695,9 @@ export function TerminalWorkspace({
               onOpenWorkspace?.(row as SavedWorkspaceRow, payload as WorkspacePayload)
             }
             refreshToken={workspaceRefreshToken}
+            canInjectCommand={canInjectCommand}
+            injectCommandDisabledReason="请先聚焦已连接的终端窗格"
+            onInjectCommand={injectSavedCommand}
           />
         ) : null}
 
@@ -784,7 +799,7 @@ export function TerminalWorkspace({
                 <button
                   type="button"
                   className={`solo-subtab-files${filesOpen ? " active" : ""}`}
-                  title="侧栏（工作区 / 远程文件）· Ctrl+Shift+E"
+                  title="侧栏（工作区 / 远程文件 / 命令）· Ctrl+Shift+E"
                   aria-label="侧栏"
                   aria-pressed={filesOpen}
                   onClick={(e) => {

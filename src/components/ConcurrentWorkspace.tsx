@@ -8,6 +8,7 @@ import type { SessionTab } from "../types";
 import { concurrentGridDims, concurrentLastCellColSpan } from "../types";
 import type { SavedWorkspaceRow, WorkspacePayload } from "../workspace";
 import { guessUnixHome } from "../cwd";
+import { commandTextForInject } from "../savedCommands";
 
 export interface ConcurrentSyncControl {
   allSynced: boolean;
@@ -245,10 +246,23 @@ export function ConcurrentWorkspace({
       ordered.find((t) => t.id === focusedSessionId) ?? ordered[0] ?? null,
     [ordered, focusedSessionId],
   );
+
+  const injectSavedCommand = useCallback(
+    (body: string, opts: { run: boolean }) => {
+      const id = focusedSessionId ?? focusedTab?.id;
+      if (!id) return;
+      const tab = sessionsRef.current.find((t) => t.id === id);
+      if (!tab || tab.status !== "connected") return;
+      handleUserInput(tab.id, commandTextForInject(body, opts.run));
+    },
+    [focusedSessionId, focusedTab?.id, handleUserInput],
+  );
+
   const canBrowseFiles =
     Boolean(focusedTab) &&
     focusedTab?.kind !== "local" &&
     focusedTab?.status === "connected";
+  const canInjectCommand = focusedTab?.status === "connected";
   const filesInitialPath =
     focusedTab?.cwd ||
     (focusedTab ? guessUnixHome(focusedTab.username) : "/");
@@ -328,6 +342,9 @@ export function ConcurrentWorkspace({
           onSaveCurrent={() => onSaveWorkspace?.()}
           onOpenWorkspace={(row, payload) => onOpenWorkspace?.(row, payload)}
           refreshToken={workspaceRefreshToken}
+          canInjectCommand={canInjectCommand}
+          injectCommandDisabledReason="请先聚焦已连接的终端窗格"
+          onInjectCommand={injectSavedCommand}
         />
       ) : null}
       <div
@@ -447,7 +464,7 @@ export function ConcurrentWorkspace({
                         className={`concurrent-files-btn${
                           filesOpen && focused ? " active" : ""
                         }`}
-                        title="侧栏（工作区 / 远程文件）"
+                        title="侧栏（工作区 / 远程文件 / 命令）"
                         aria-label={`侧栏：${label}`}
                         onClick={(e) => {
                           e.stopPropagation();

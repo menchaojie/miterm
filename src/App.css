@@ -250,6 +250,31 @@ a,
   overflow: auto;
   padding: 14px 18px 22px;
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) rgba(255, 255, 255, 0.04);
+}
+
+.hosts-panel-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.hosts-panel-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+
+.hosts-panel-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+}
+
+.hosts-panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.hosts-panel-body::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .hosts-panel.panel-hidden,
@@ -420,6 +445,31 @@ a,
   border-radius: var(--radius-lg);
   overflow-x: auto;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) rgba(255, 255, 255, 0.04);
+}
+
+.host-table-wrap::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.host-table-wrap::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+
+.host-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+}
+
+.host-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.host-table-wrap::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .host-table {
@@ -2255,9 +2305,10 @@ body.split-sash-dragging .split-sash-horizontal {
   border-radius: 4px;
   background: transparent;
   color: #9aa;
-  font-size: 12px;
-  padding: 4px 8px;
+  font-size: 11px;
+  padding: 4px 6px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .workspace-sidebar-tab:hover:not(:disabled) {
@@ -2288,10 +2339,19 @@ body.split-sash-dragging .split-sash-horizontal {
 .workspace-list-toolbar {
   display: flex;
   gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .workspace-save-btn {
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 72px;
+  max-width: 108px;
+  width: auto;
+}
+
+.workspace-list-toolbar .btn-secondary {
+  flex: 0 0 auto;
 }
 
 .workspace-list {
@@ -2354,6 +2414,84 @@ body.split-sash-dragging .split-sash-horizontal {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.saved-command-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.saved-command-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: #9aa;
+}
+
+.saved-command-field input,
+.saved-command-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #e8e8e8;
+  font-size: 12px;
+  padding: 6px 8px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.saved-command-field textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.4;
+}
+
+.saved-command-editor-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.saved-command-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.saved-command-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.saved-command-main:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.saved-command-main:not(:disabled):hover .workspace-list-name {
+  color: #c8eefc;
+}
+
+.saved-command-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
 }
 
 .hosts-panel-main {

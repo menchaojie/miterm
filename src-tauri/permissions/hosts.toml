@@ -15,4 +15,8 @@ commands.allow = [
   "save_workspace",
   "update_workspace",
   "delete_workspace",
+  "list_commands",
+  "save_command",
+  "update_command",
+  "delete_command",
 ]

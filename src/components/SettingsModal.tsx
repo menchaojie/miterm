@@ -103,7 +103,7 @@ export function SettingsModal({
       : activeTab === "shortcutsPane"
         ? "默认：Ctrl+Shift+[ / ] 循环窗格；Ctrl+Alt+方向键跳相邻窗格；Ctrl+Shift+空格交替全部加入/退出并发。"
         : activeTab === "shortcutsFiles"
-          ? "默认：Ctrl+Shift+E 打开或关闭侧栏（工作区 / 远程文件）。"
+          ? "默认：Ctrl+Shift+E 打开或关闭侧栏（工作区 / 远程文件 / 命令）。"
           : "";
 
   return (

@@ -6,8 +6,9 @@ mod ssh;
 use std::sync::Arc;
 
 use db::{
-    Category, HostStore, SaveCategoryParams, SaveHostParams, SaveWorkspaceParams, SavedHost,
-    SavedWorkspace, UpdateCategoryParams, UpdateHostParams, UpdateWorkspaceParams,
+    Category, HostStore, SaveCategoryParams, SaveCommandParams, SaveHostParams,
+    SaveWorkspaceParams, SavedCommand, SavedHost, SavedWorkspace, UpdateCategoryParams,
+    UpdateCommandParams, UpdateHostParams, UpdateWorkspaceParams,
 };
 use local::{LocalConnectParams, LocalSessionManager};
 use ssh::{
@@ -423,6 +424,44 @@ async fn delete_workspace(state: State<'_, AppState>, id: i64) -> Result<(), Str
         .map_err(|e| format!("task join error: {e}"))?
 }
 
+#[tauri::command]
+async fn list_commands(state: State<'_, AppState>) -> Result<Vec<SavedCommand>, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.list_commands())
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn save_command(
+    state: State<'_, AppState>,
+    params: SaveCommandParams,
+) -> Result<SavedCommand, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.save_command(params))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn update_command(
+    state: State<'_, AppState>,
+    params: UpdateCommandParams,
+) -> Result<SavedCommand, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.update_command(params))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn delete_command(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.delete_command(id))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -475,7 +514,11 @@ pub fn run() {
             list_workspaces,
             save_workspace,
             update_workspace,
-            delete_workspace
+            delete_workspace,
+            list_commands,
+            save_command,
+            update_command,
+            delete_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

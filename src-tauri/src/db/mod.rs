@@ -100,6 +100,31 @@ pub struct UpdateWorkspaceParams {
     pub payload: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedCommand {
+    pub id: i64,
+    pub title: String,
+    pub body: String,
+    pub sort_order: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCommandParams {
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCommandParams {
+    pub id: i64,
+    pub title: String,
+    pub body: String,
+}
+
 fn resolve_name(name: &str, fallback: &str) -> String {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -233,6 +258,13 @@ impl HostStore {
                name TEXT NOT NULL,
                kind TEXT NOT NULL,
                payload TEXT NOT NULL,
+               updated_at INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS saved_commands (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               title TEXT NOT NULL,
+               body TEXT NOT NULL,
+               sort_order INTEGER NOT NULL DEFAULT 0,
                updated_at INTEGER NOT NULL
              );",
         )
@@ -687,6 +719,118 @@ impl HostStore {
             .map_err(|e| format!("delete workspace: {e}"))?;
         if n == 0 {
             return Err("workspace not found".into());
+        }
+        Ok(())
+    }
+
+    pub fn list_commands(&self) -> Result<Vec<SavedCommand>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, title, body, sort_order, updated_at FROM saved_commands
+                 ORDER BY sort_order ASC, updated_at DESC, id DESC",
+            )
+            .map_err(|e| format!("prepare commands: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(SavedCommand {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    body: row.get(2)?,
+                    sort_order: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("query commands: {e}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| format!("command row: {e}"))?);
+        }
+        Ok(out)
+    }
+
+    pub fn save_command(&self, params: SaveCommandParams) -> Result<SavedCommand, String> {
+        let title = params.title.trim();
+        if title.is_empty() {
+            return Err("命令标题不能为空".into());
+        }
+        let body = params.body.trim_end();
+        if body.trim().is_empty() {
+            return Err("命令内容不能为空".into());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let conn = self.conn.lock();
+        let next_order: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM saved_commands",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(1);
+        conn.execute(
+            "INSERT INTO saved_commands (title, body, sort_order, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![title, body, next_order, now],
+        )
+        .map_err(|e| format!("save command: {e}"))?;
+        let id = conn.last_insert_rowid();
+        Ok(SavedCommand {
+            id,
+            title: title.to_string(),
+            body: body.to_string(),
+            sort_order: next_order,
+            updated_at: now,
+        })
+    }
+
+    pub fn update_command(&self, params: UpdateCommandParams) -> Result<SavedCommand, String> {
+        let title = params.title.trim();
+        if title.is_empty() {
+            return Err("命令标题不能为空".into());
+        }
+        let body = params.body.trim_end();
+        if body.trim().is_empty() {
+            return Err("命令内容不能为空".into());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let conn = self.conn.lock();
+        let sort_order: i64 = conn
+            .query_row(
+                "SELECT sort_order FROM saved_commands WHERE id = ?1",
+                params![params.id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "command not found".to_string())?;
+        let n = conn
+            .execute(
+                "UPDATE saved_commands SET title = ?1, body = ?2, updated_at = ?3 WHERE id = ?4",
+                params![title, body, now, params.id],
+            )
+            .map_err(|e| format!("update command: {e}"))?;
+        if n == 0 {
+            return Err("command not found".into());
+        }
+        Ok(SavedCommand {
+            id: params.id,
+            title: title.to_string(),
+            body: body.to_string(),
+            sort_order,
+            updated_at: now,
+        })
+    }
+
+    pub fn delete_command(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM saved_commands WHERE id = ?1", params![id])
+            .map_err(|e| format!("delete command: {e}"))?;
+        if n == 0 {
+            return Err("command not found".into());
         }
         Ok(())
     }

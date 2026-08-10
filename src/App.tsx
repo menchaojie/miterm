@@ -1696,6 +1696,8 @@ function App() {
                   void handleOpenWorkspace(row, payload);
                 }}
                 refreshToken={workspaceRefreshToken}
+                canInjectCommand={false}
+                injectCommandDisabledReason="请先打开终端会话后再填入命令"
               />
             ) : null}
             <div className="hosts-panel-body">

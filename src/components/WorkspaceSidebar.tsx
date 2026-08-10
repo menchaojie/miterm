@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RemoteFilePanel } from "./RemoteFilePanel";
+import { SavedCommandsPanel } from "./SavedCommandsPanel";
 import {
   deleteWorkspaceRow,
   layoutPaneCount,
@@ -10,7 +11,7 @@ import {
   type WorkspacePayload,
 } from "../workspace";
 
-export type SidebarPane = "workspaces" | "files";
+export type SidebarPane = "workspaces" | "files" | "commands";
 
 const WIDTH_KEY = "miterm.sidebarWidth";
 const LEGACY_WIDTH_KEY = "miterm.remoteFilePanelWidth";
@@ -42,7 +43,7 @@ function saveSidebarWidth(w: number) {
 function loadSidebarPane(defaultPane: SidebarPane): SidebarPane {
   try {
     const v = localStorage.getItem(PANE_KEY);
-    if (v === "files" || v === "workspaces") return v;
+    if (v === "files" || v === "workspaces" || v === "commands") return v;
   } catch {
     /* ignore */
   }
@@ -72,6 +73,10 @@ export interface WorkspaceSidebarProps {
   onOpenWorkspace: (row: SavedWorkspaceRow, payload: WorkspacePayload) => void;
   /** 列表刷新令牌（保存后递增） */
   refreshToken?: number;
+  /** 是否可向当前终端填入/运行命令 */
+  canInjectCommand?: boolean;
+  injectCommandDisabledReason?: string;
+  onInjectCommand?: (body: string, opts: { run: boolean }) => void;
 }
 
 export function WorkspaceSidebar({
@@ -86,6 +91,9 @@ export function WorkspaceSidebar({
   onSaveCurrent,
   onOpenWorkspace,
   refreshToken = 0,
+  canInjectCommand = false,
+  injectCommandDisabledReason,
+  onInjectCommand,
 }: WorkspaceSidebarProps) {
   const defaultPane: SidebarPane = filesAvailable ? "files" : "workspaces";
   const [pane, setPane] = useState<SidebarPane>(() =>
@@ -202,6 +210,18 @@ export function WorkspaceSidebar({
           >
             远程文件
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={effectivePane === "commands"}
+            className={`workspace-sidebar-tab${
+              effectivePane === "commands" ? " active" : ""
+            }`}
+            title="常用命令：填入或运行到当前终端"
+            onClick={() => selectPane("commands")}
+          >
+            命令
+          </button>
         </div>
         <button
           type="button"
@@ -297,6 +317,12 @@ export function WorkspaceSidebar({
             </ul>
           )}
         </div>
+      ) : effectivePane === "commands" ? (
+        <SavedCommandsPanel
+          canInject={canInjectCommand}
+          injectDisabledReason={injectCommandDisabledReason}
+          onInject={(body, opts) => onInjectCommand?.(body, opts)}
+        />
       ) : filesSessionId ? (
         <div className="workspace-files-host">
           <RemoteFilePanel

@@ -178,7 +178,7 @@ export const SHORTCUT_ACTIONS: {
   {
     id: "toggleRemoteFiles",
     label: "打开/关闭侧栏",
-    hint: "工作区与远程文件；默认 Ctrl+Shift+E",
+    hint: "工作区 / 远程文件 / 命令；默认 Ctrl+Shift+E",
     tab: "shortcutsFiles",
   },
 ];
