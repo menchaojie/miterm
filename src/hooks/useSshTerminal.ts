@@ -27,6 +27,14 @@ export function getSessionTerminalSelection(sessionId: string): string {
   return terminalBySession.get(sessionId)?.getSelection() ?? "";
 }
 
+/** 将焦点还给指定会话的 xterm（命令面板关闭后等） */
+export function focusSessionTerminal(sessionId: string): boolean {
+  const term = terminalBySession.get(sessionId);
+  if (!term) return false;
+  term.focus();
+  return true;
+}
+
 export type TerminalCursorStyle = "bar" | "block" | "underline";
 
 export function useSshTerminal(
@@ -232,6 +240,8 @@ export function useSshTerminal(
       }
       // 默认打开/关闭远程文件；交给窗口级快捷键处理，避免写入 PTY
       if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyE") return false;
+      // Ctrl+Shift+P：命令面板
+      if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyP") return false;
       // Ctrl+Shift+Space：全部加入/退出并发，不写入 PTY
       if (ev.ctrlKey && ev.shiftKey && ev.code === "Space") return false;
       // Ctrl+Alt+方向键：交给应用窗格导航，不写入 PTY

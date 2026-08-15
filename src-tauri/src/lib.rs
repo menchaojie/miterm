@@ -387,6 +387,87 @@ async fn delete_category(state: State<'_, AppState>, id: i64) -> Result<(), Stri
 }
 
 #[tauri::command]
+async fn list_workspace_categories(
+    state: State<'_, AppState>,
+) -> Result<Vec<Category>, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.list_workspace_categories())
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn create_workspace_category(
+    state: State<'_, AppState>,
+    params: SaveCategoryParams,
+) -> Result<Category, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.create_workspace_category(params))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn update_workspace_category(
+    state: State<'_, AppState>,
+    params: UpdateCategoryParams,
+) -> Result<Category, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.update_workspace_category(params))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn delete_workspace_category(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.delete_workspace_category(id))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn list_command_categories(state: State<'_, AppState>) -> Result<Vec<Category>, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.list_command_categories())
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn create_command_category(
+    state: State<'_, AppState>,
+    params: SaveCategoryParams,
+) -> Result<Category, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.create_command_category(params))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn update_command_category(
+    state: State<'_, AppState>,
+    params: UpdateCategoryParams,
+) -> Result<Category, String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.update_command_category(params))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn delete_command_category(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    let hosts = Arc::clone(&state.hosts);
+    tokio::task::spawn_blocking(move || hosts.delete_command_category(id))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
 async fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<SavedWorkspace>, String> {
     let hosts = Arc::clone(&state.hosts);
     tokio::task::spawn_blocking(move || hosts.list_workspaces())
@@ -511,6 +592,14 @@ pub fn run() {
             create_category,
             update_category,
             delete_category,
+            list_workspace_categories,
+            create_workspace_category,
+            update_workspace_category,
+            delete_workspace_category,
+            list_command_categories,
+            create_command_category,
+            update_command_category,
+            delete_command_category,
             list_workspaces,
             save_workspace,
             update_workspace,

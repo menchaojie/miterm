@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { RemoteFilePanel } from "./RemoteFilePanel";
 import { SavedCommandsPanel } from "./SavedCommandsPanel";
 import type { Category, CategoryFilter } from "../types";
+import {
+  createWorkspaceCategory,
+  deleteWorkspaceCategory,
+  listWorkspaceCategories,
+} from "../domainCategories";
 import {
   deleteWorkspaceRow,
   layoutPaneCount,
@@ -105,8 +109,6 @@ export interface WorkspaceSidebarProps {
   filesInitialPath?: string;
   filesTerminalCwd?: string | null;
   filesConnected?: boolean;
-  /** 与主机共用的分类列表 */
-  categories?: Category[];
   /** 当前是否有可保存的会话工作区 */
   canSaveCurrent: boolean;
   saveDisabledReason?: string;
@@ -128,7 +130,6 @@ export function WorkspaceSidebar({
   filesInitialPath = "/",
   filesTerminalCwd = null,
   filesConnected = false,
-  categories: categoriesProp,
   canSaveCurrent,
   saveDisabledReason,
   onSaveCurrent,
@@ -144,14 +145,12 @@ export function WorkspaceSidebar({
   );
   const [panelWidth, setPanelWidth] = useState(loadSidebarWidth);
   const [rows, setRows] = useState<SavedWorkspaceRow[]>([]);
-  const [categoriesLocal, setCategoriesLocal] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [filter, setFilter] = useState<CategoryFilter>(loadWorkspaceFilter);
   const [saveCategoryId, setSaveCategoryId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
-
-  const categories = categoriesProp ?? categoriesLocal;
 
   const effectivePane: SidebarPane =
     pane === "files" && !filesAvailable ? "workspaces" : pane;
@@ -160,17 +159,18 @@ export function WorkspaceSidebar({
     setLoading(true);
     setError("");
     try {
-      const nextRows = await listWorkspaces();
+      const [nextRows, nextCats] = await Promise.all([
+        listWorkspaces(),
+        listWorkspaceCategories(),
+      ]);
       setRows(nextRows);
-      if (categoriesProp == null) {
-        setCategoriesLocal(await invoke<Category[]>("list_categories"));
-      }
+      setCategories(nextCats);
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [categoriesProp]);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -247,6 +247,40 @@ export function WorkspaceSidebar({
       })),
     [filteredRows],
   );
+
+  const addCategory = async () => {
+    const name = window.prompt("工作区分类名称");
+    if (name == null) return;
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("分类名称不能为空");
+      return;
+    }
+    try {
+      const cat = await createWorkspaceCategory(trimmed);
+      await refresh();
+      setSaveCategoryId(cat.id);
+      onFilterChange(cat.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const removeCategory = async (cat: Category) => {
+    if (
+      !window.confirm(
+        `删除工作区分类「${cat.name}」？该分类下的工作区将变为未分类。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteWorkspaceCategory(cat.id);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const changeCategory = async (
     row: SavedWorkspaceRow,
@@ -391,6 +425,28 @@ export function WorkspaceSidebar({
                 ))}
               </select>
             </label>
+            <div className="workspace-category-manage">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void addCategory()}
+              >
+                新建分类
+              </button>
+              {typeof filter === "number" ? (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  title="删除当前筛选的分类"
+                  onClick={() => {
+                    const cat = categories.find((c) => c.id === filter);
+                    if (cat) void removeCategory(cat);
+                  }}
+                >
+                  删除分类
+                </button>
+              ) : null}
+            </div>
           </div>
           {error ? <div className="workspace-list-error">{error}</div> : null}
           {loading && rows.length === 0 ? (
@@ -486,7 +542,6 @@ export function WorkspaceSidebar({
         <SavedCommandsPanel
           canInject={canInjectCommand}
           injectDisabledReason={injectCommandDisabledReason}
-          categories={categories}
           onInject={(body, opts) => onInjectCommand?.(body, opts)}
         />
       ) : filesSessionId ? (

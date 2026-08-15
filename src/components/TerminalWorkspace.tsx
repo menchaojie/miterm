@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { TerminalView, CURSOR_COLOR, CURSOR_DIM } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import type { ConcurrentSyncControl } from "./ConcurrentWorkspace";
-import { getSessionTerminalSelection } from "../hooks/useSshTerminal";
+import { getSessionTerminalSelection, focusSessionTerminal } from "../hooks/useSshTerminal";
 import type {
   FolderLayout,
   FolderSubTab,
@@ -47,8 +47,6 @@ interface TerminalWorkspaceProps {
     payload: import("../workspace").WorkspacePayload,
   ) => void;
   workspaceRefreshToken?: number;
-  /** 与主机共用的分类（工作区筛选/归属） */
-  workspaceCategories?: import("../types").Category[];
   onSelectSubTab: (subTabId: string) => void;
   onSelectSession: (sessionId: string) => void;
   onCloseSubTab: (subTabId: string) => void;
@@ -63,6 +61,12 @@ interface TerminalWorkspaceProps {
   onSyncControlChange?: (control: ConcurrentSyncControl | null) => void;
   /** 终端字号（px） */
   fontSize?: number;
+  /** 注册当前工作区的命令注入（前台时有效；离开传 null） */
+  onRegisterInjectCommand?: (
+    fn: ((body: string, opts: { run: boolean }) => void) | null,
+  ) => void;
+  /** 注册「聚焦当前终端」（命令面板关闭后回焦） */
+  onRegisterFocusTerminal?: (fn: (() => void) | null) => void;
 }
 
 type CtxMenu = {
@@ -337,7 +341,6 @@ export function TerminalWorkspace({
   onSaveWorkspace,
   onOpenWorkspace,
   workspaceRefreshToken = 0,
-  workspaceCategories,
   onSelectSubTab,
   onSelectSession,
   onCloseSubTab,
@@ -350,6 +353,8 @@ export function TerminalWorkspace({
   onCwdChange,
   onSyncControlChange,
   fontSize = 14,
+  onRegisterInjectCommand,
+  onRegisterFocusTerminal,
 }: TerminalWorkspaceProps) {
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
@@ -500,6 +505,41 @@ export function TerminalWorkspace({
     },
     [activeSessionId, handleUserInput],
   );
+
+  useEffect(() => {
+    if (!onRegisterInjectCommand) return;
+    const ready =
+      workspaceActive &&
+      sessionsRef.current.some(
+        (t) => t.id === activeSessionId && t.status === "connected",
+      );
+    if (!ready) {
+      onRegisterInjectCommand(null);
+      return;
+    }
+    onRegisterInjectCommand(injectSavedCommand);
+    return () => onRegisterInjectCommand(null);
+  }, [
+    activeSessionId,
+    injectSavedCommand,
+    onRegisterInjectCommand,
+    sessions,
+    workspaceActive,
+  ]);
+
+  const focusActiveTerminal = useCallback(() => {
+    focusSessionTerminal(activeSessionId);
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!onRegisterFocusTerminal) return;
+    if (!workspaceActive) {
+      onRegisterFocusTerminal(null);
+      return;
+    }
+    onRegisterFocusTerminal(focusActiveTerminal);
+    return () => onRegisterFocusTerminal(null);
+  }, [focusActiveTerminal, onRegisterFocusTerminal, workspaceActive]);
 
   const canBrowseFiles =
     Boolean(activeTab) &&
@@ -711,7 +751,6 @@ export function TerminalWorkspace({
               onOpenWorkspace?.(row as SavedWorkspaceRow, payload as WorkspacePayload)
             }
             refreshToken={workspaceRefreshToken}
-            categories={workspaceCategories}
             canInjectCommand={canInjectCommand}
             injectCommandDisabledReason="请先聚焦已连接的终端窗格"
             onInjectCommand={injectSavedCommand}

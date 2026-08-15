@@ -3,7 +3,7 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TerminalView, CURSOR_COLOR, CURSOR_DIM } from "./TerminalView";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
-import { getSessionTerminalSelection } from "../hooks/useSshTerminal";
+import { getSessionTerminalSelection, focusSessionTerminal } from "../hooks/useSshTerminal";
 import type { SessionTab } from "../types";
 import { concurrentGridDims, concurrentLastCellColSpan } from "../types";
 import type { SavedWorkspaceRow, WorkspacePayload } from "../workspace";
@@ -36,7 +36,6 @@ interface ConcurrentWorkspaceProps {
     payload: WorkspacePayload,
   ) => void;
   workspaceRefreshToken?: number;
-  workspaceCategories?: import("../types").Category[];
   onFocusSession: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
   onReconnectSession?: (sessionId: string) => void;
@@ -45,6 +44,10 @@ interface ConcurrentWorkspaceProps {
   onSyncControlChange?: (control: ConcurrentSyncControl | null) => void;
   /** 终端字号（px） */
   fontSize?: number;
+  onRegisterInjectCommand?: (
+    fn: ((body: string, opts: { run: boolean }) => void) | null,
+  ) => void;
+  onRegisterFocusTerminal?: (fn: (() => void) | null) => void;
 }
 
 function sessionLabel(tab: SessionTab): string {
@@ -99,13 +102,14 @@ export function ConcurrentWorkspace({
   onSaveWorkspace,
   onOpenWorkspace,
   workspaceRefreshToken = 0,
-  workspaceCategories,
   onFocusSession,
   onCloseSession,
   onReconnectSession,
   onCwdChange,
   onSyncControlChange,
   fontSize = 14,
+  onRegisterInjectCommand,
+  onRegisterFocusTerminal,
 }: ConcurrentWorkspaceProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const [layoutEpoch, setLayoutEpoch] = useState(0);
@@ -260,6 +264,47 @@ export function ConcurrentWorkspace({
     [focusedSessionId, focusedTab?.id, handleUserInput],
   );
 
+  useEffect(() => {
+    if (!onRegisterInjectCommand) return;
+    const focusId = focusedSessionId ?? focusedTab?.id;
+    const ready =
+      workspaceActive &&
+      Boolean(
+        focusId &&
+          sessionsRef.current.some(
+            (t) => t.id === focusId && t.status === "connected",
+          ),
+      );
+    if (!ready) {
+      onRegisterInjectCommand(null);
+      return;
+    }
+    onRegisterInjectCommand(injectSavedCommand);
+    return () => onRegisterInjectCommand(null);
+  }, [
+    focusedSessionId,
+    focusedTab?.id,
+    injectSavedCommand,
+    onRegisterInjectCommand,
+    sessions,
+    workspaceActive,
+  ]);
+
+  const focusActiveTerminal = useCallback(() => {
+    const id = focusedSessionId ?? focusedTab?.id;
+    if (id) focusSessionTerminal(id);
+  }, [focusedSessionId, focusedTab?.id]);
+
+  useEffect(() => {
+    if (!onRegisterFocusTerminal) return;
+    if (!workspaceActive) {
+      onRegisterFocusTerminal(null);
+      return;
+    }
+    onRegisterFocusTerminal(focusActiveTerminal);
+    return () => onRegisterFocusTerminal(null);
+  }, [focusActiveTerminal, onRegisterFocusTerminal, workspaceActive]);
+
   const canBrowseFiles =
     Boolean(focusedTab) &&
     focusedTab?.kind !== "local" &&
@@ -356,7 +401,6 @@ export function ConcurrentWorkspace({
           onSaveCurrent={(categoryId) => onSaveWorkspace?.(categoryId)}
           onOpenWorkspace={(row, payload) => onOpenWorkspace?.(row, payload)}
           refreshToken={workspaceRefreshToken}
-          categories={workspaceCategories}
           canInjectCommand={canInjectCommand}
           injectCommandDisabledReason="请先聚焦已连接的终端窗格"
           onInjectCommand={injectSavedCommand}

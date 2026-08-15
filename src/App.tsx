@@ -68,6 +68,7 @@ import {
   type WorkspacePayload,
 } from "./workspace";
 import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
+import { CommandPalette } from "./components/CommandPalette";
 import "./App.css";
 
 const DEFAULT_COLS = 80;
@@ -215,10 +216,35 @@ function App() {
   const savedHostsRef = useRef(savedHosts);
   const sessionTabsRef = useRef(sessionTabs);
   const syncControlRef = useRef(syncControl);
+  const injectCommandRef = useRef<
+    ((body: string, opts: { run: boolean }) => void) | null
+  >(null);
+  const focusTerminalRef = useRef<(() => void) | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [injectReady, setInjectReady] = useState(false);
   settingsRef.current = settings;
   savedHostsRef.current = savedHosts;
   sessionTabsRef.current = sessionTabs;
   syncControlRef.current = syncControl;
+
+  const handleRegisterInjectCommand = useCallback(
+    (fn: ((body: string, opts: { run: boolean }) => void) | null) => {
+      injectCommandRef.current = fn;
+      setInjectReady(Boolean(fn));
+    },
+    [],
+  );
+
+  const handleRegisterFocusTerminal = useCallback((fn: (() => void) | null) => {
+    focusTerminalRef.current = fn;
+  }, []);
+
+  const closePalette = useCallback(() => {
+    setPaletteOpen(false);
+    window.setTimeout(() => {
+      focusTerminalRef.current?.();
+    }, 0);
+  }, []);
 
   const onHostsTab = activeTabId === HOSTS_TAB_ID;
   const activeGroup = useMemo(
@@ -1513,6 +1539,19 @@ function App() {
           else control.selectAll();
           return;
         }
+        if (kind === "commandPalette") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.repeat) return;
+          setPaletteOpen((open) => {
+            if (open) {
+              window.setTimeout(() => focusTerminalRef.current?.(), 0);
+              return false;
+            }
+            return true;
+          });
+          return;
+        }
         if (
           kind === "focusPaneLeft" ||
           kind === "focusPaneRight" ||
@@ -1694,7 +1733,6 @@ function App() {
                   }))
                 }
                 filesAvailable={false}
-                categories={categories}
                 canSaveCurrent={false}
                 saveDisabledReason="请先打开主机夹或并发会话"
                 onSaveCurrent={() => undefined}
@@ -1774,7 +1812,6 @@ function App() {
                   }
                   fontSize={settings.terminalFontSize}
                   canSaveWorkspace
-                  workspaceCategories={categories}
                   onSaveWorkspace={(categoryId) => {
                     void handleSaveCurrentWorkspace(categoryId);
                   }}
@@ -1782,6 +1819,12 @@ function App() {
                     void handleOpenWorkspace(row, payload);
                   }}
                   workspaceRefreshToken={workspaceRefreshToken}
+                  onRegisterInjectCommand={
+                    visible ? handleRegisterInjectCommand : undefined
+                  }
+                  onRegisterFocusTerminal={
+                    visible ? handleRegisterFocusTerminal : undefined
+                  }
                 />
               </div>
             );
@@ -1843,7 +1886,6 @@ function App() {
                   }
                   fontSize={settings.terminalFontSize}
                   canSaveWorkspace
-                  workspaceCategories={categories}
                   onSaveWorkspace={(categoryId) => {
                     void handleSaveCurrentWorkspace(categoryId);
                   }}
@@ -1851,6 +1893,12 @@ function App() {
                     void handleOpenWorkspace(row, payload);
                   }}
                   workspaceRefreshToken={workspaceRefreshToken}
+                  onRegisterInjectCommand={
+                    visible ? handleRegisterInjectCommand : undefined
+                  }
+                  onRegisterFocusTerminal={
+                    visible ? handleRegisterFocusTerminal : undefined
+                  }
                 />
               </div>
             );
@@ -1875,6 +1923,16 @@ function App() {
         settings={settings}
         onClose={() => setSettingsOpen(false)}
         onSave={handleSaveSettings}
+      />
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={closePalette}
+        canInject={injectReady}
+        injectDisabledReason="请先打开并聚焦已连接的终端"
+        onInject={(body, opts) => {
+          injectCommandRef.current?.(body, opts);
+        }}
       />
     </div>
   );

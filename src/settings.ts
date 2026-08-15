@@ -30,7 +30,8 @@ export type ShortcutActionId =
   | "tab7"
   | "tab8"
   | "tab9"
-  | "toggleRemoteFiles";
+  | "toggleRemoteFiles"
+  | "commandPalette";
 
 export type ShortcutMap = Record<ShortcutActionId, ShortcutBinding>;
 
@@ -181,6 +182,12 @@ export const SHORTCUT_ACTIONS: {
     hint: "工作区 / 远程文件 / 命令；默认 Ctrl+Shift+E",
     tab: "shortcutsFiles",
   },
+  {
+    id: "commandPalette",
+    label: "命令面板",
+    hint: "搜索并填入/运行收藏命令；默认 Ctrl+Shift+P",
+    tab: "shortcutsFiles",
+  },
 ];
 
 const STORAGE_KEY = "miterm.settings.v1";
@@ -219,6 +226,7 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   tab8: binding("8", { ctrl: true }),
   tab9: binding("9", { ctrl: true }),
   toggleRemoteFiles: binding("e", { ctrl: true, shift: true }),
+  commandPalette: binding("p", { ctrl: true, shift: true }),
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -449,6 +457,7 @@ export function tabIndexForAction(
   | "prevPane"
   | "nextPane"
   | "toggleFiles"
+  | "commandPalette"
   | "focusPaneLeft"
   | "focusPaneRight"
   | "focusPaneUp"
@@ -475,6 +484,8 @@ export function tabIndexForAction(
       return "toggleAllSync";
     case "toggleRemoteFiles":
       return "toggleFiles";
+    case "commandPalette":
+      return "commandPalette";
     case "hostsTab":
       return 0;
     case "tab2":

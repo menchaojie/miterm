@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Category, CategoryFilter } from "../types";
 import {
+  createCommandCategory,
+  deleteCommandCategory,
+  listCommandCategories,
+} from "../domainCategories";
+import {
   deleteCommandRow,
   listSavedCommands,
   saveCommandRow,
@@ -48,8 +53,6 @@ function selectValueToFilter(value: string): CategoryFilter {
 export interface SavedCommandsPanelProps {
   canInject: boolean;
   injectDisabledReason?: string;
-  /** 与主机/工作区共用的分类 */
-  categories?: Category[];
   /** 填入当前终端；run=true 时末尾带换行以执行 */
   onInject: (body: string, opts: { run: boolean }) => void;
 }
@@ -57,10 +60,10 @@ export interface SavedCommandsPanelProps {
 export function SavedCommandsPanel({
   canInject,
   injectDisabledReason,
-  categories = [],
   onInject,
 }: SavedCommandsPanelProps) {
   const [rows, setRows] = useState<SavedCommandRow[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>(loadCommandFilter);
@@ -74,7 +77,12 @@ export function SavedCommandsPanel({
     setLoading(true);
     setError("");
     try {
-      setRows(await listSavedCommands());
+      const [nextRows, nextCats] = await Promise.all([
+        listSavedCommands(),
+        listCommandCategories(),
+      ]);
+      setRows(nextRows);
+      setCategories(nextCats);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -99,6 +107,40 @@ export function SavedCommandsPanel({
     if (creating || editingId != null) {
       if (typeof next === "number") setDraftCategoryId(next);
       else if (next === "uncategorized") setDraftCategoryId(null);
+    }
+  };
+
+  const addCategory = async () => {
+    const name = window.prompt("命令分类名称");
+    if (name == null) return;
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("分类名称不能为空");
+      return;
+    }
+    try {
+      const cat = await createCommandCategory(trimmed);
+      await refresh();
+      setDraftCategoryId(cat.id);
+      onFilterChange(cat.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const removeCategory = async (cat: Category) => {
+    if (
+      !window.confirm(
+        `删除命令分类「${cat.name}」？该分类下的命令将变为未分类。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteCommandCategory(cat.id);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -245,6 +287,28 @@ export function SavedCommandsPanel({
             ))}
           </select>
         </label>
+        <div className="workspace-category-manage">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => void addCategory()}
+          >
+            新建分类
+          </button>
+          {typeof filter === "number" ? (
+            <button
+              type="button"
+              className="btn-secondary"
+              title="删除当前筛选的分类"
+              onClick={() => {
+                const cat = categories.find((c) => c.id === filter);
+                if (cat) void removeCategory(cat);
+              }}
+            >
+              删除分类
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {error ? <div className="workspace-list-error">{error}</div> : null}
