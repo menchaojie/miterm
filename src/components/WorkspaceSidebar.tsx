@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RemoteFilePanel } from "./RemoteFilePanel";
 import { SavedCommandsPanel } from "./SavedCommandsPanel";
-import type { Category, CategoryFilter } from "../types";
+import type { Category } from "../types";
+import {
+  buildCategoryGroups,
+  isGroupCollapsed,
+  loadCollapsedGroupKeys,
+  saveCollapsedGroupKeys,
+  toggleCollapsedGroupKey,
+  type CategoryGroupKey,
+} from "../categoryTree";
 import {
   createWorkspaceCategory,
   deleteWorkspaceCategory,
   listWorkspaceCategories,
+  updateWorkspaceCategory,
 } from "../domainCategories";
 import {
   deleteWorkspaceRow,
@@ -23,7 +32,7 @@ export type SidebarPane = "workspaces" | "files" | "commands";
 const WIDTH_KEY = "miterm.sidebarWidth";
 const LEGACY_WIDTH_KEY = "miterm.remoteFilePanelWidth";
 const PANE_KEY = "miterm.sidebarPane";
-const WS_FILTER_KEY = "miterm.workspaceCategoryFilter";
+const WS_COLLAPSE_KEY = "miterm.workspaceCategoryCollapse.v1";
 const DEFAULT_WIDTH = 340;
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 720;
@@ -66,39 +75,18 @@ function saveSidebarPane(pane: SidebarPane) {
   }
 }
 
-function loadWorkspaceFilter(): CategoryFilter {
-  try {
-    const v = localStorage.getItem(WS_FILTER_KEY);
-    if (v === "all" || v === "uncategorized") return v;
-    if (v != null) {
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
-    }
-  } catch {
-    /* ignore */
-  }
-  return "all";
-}
-
-function saveWorkspaceFilter(filter: CategoryFilter) {
-  try {
-    localStorage.setItem(WS_FILTER_KEY, String(filter));
-  } catch {
-    /* ignore */
-  }
-}
-
-function filterToSelectValue(filter: CategoryFilter): string {
-  if (filter === "all") return "all";
-  if (filter === "uncategorized") return "uncategorized";
-  return String(filter);
-}
-
-function selectValueToFilter(value: string): CategoryFilter {
-  if (value === "all") return "all";
-  if (value === "uncategorized") return "uncategorized";
-  const n = Number(value);
-  return Number.isFinite(n) ? n : "all";
+function IconChevron({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      className={`cat-tree-chevron${collapsed ? " is-collapsed" : ""}`}
+      viewBox="0 0 24 24"
+      width="12"
+      height="12"
+      aria-hidden="true"
+    >
+      <path fill="currentColor" d="M9 6l6 6-6 6" />
+    </svg>
+  );
 }
 
 export interface WorkspaceSidebarProps {
@@ -146,8 +134,10 @@ export function WorkspaceSidebar({
   const [panelWidth, setPanelWidth] = useState(loadSidebarWidth);
   const [rows, setRows] = useState<SavedWorkspaceRow[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [filter, setFilter] = useState<CategoryFilter>(loadWorkspaceFilter);
   const [saveCategoryId, setSaveCategoryId] = useState<number | null>(null);
+  const [collapsed, setCollapsed] = useState(() =>
+    loadCollapsedGroupKeys(WS_COLLAPSE_KEY),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
@@ -182,24 +172,18 @@ export function WorkspaceSidebar({
     }
   }, [filesAvailable, pane]);
 
-  useEffect(() => {
-    if (typeof filter === "number" && !categories.some((c) => c.id === filter)) {
-      setFilter("all");
-      saveWorkspaceFilter("all");
-    }
-  }, [categories, filter]);
-
   const selectPane = (next: SidebarPane) => {
     if (next === "files" && !filesAvailable) return;
     setPane(next);
     saveSidebarPane(next);
   };
 
-  const onFilterChange = (next: CategoryFilter) => {
-    setFilter(next);
-    saveWorkspaceFilter(next);
-    if (typeof next === "number") setSaveCategoryId(next);
-    else if (next === "uncategorized") setSaveCategoryId(null);
+  const toggleGroupCollapsed = (key: CategoryGroupKey) => {
+    setCollapsed((prev) => {
+      const next = toggleCollapsedGroupKey(prev, key);
+      saveCollapsedGroupKeys(WS_COLLAPSE_KEY, next);
+      return next;
+    });
   };
 
   const onResizePointerDown = (e: React.PointerEvent) => {
@@ -231,21 +215,9 @@ export function WorkspaceSidebar({
     saveSidebarWidth(panelWidth);
   };
 
-  const filteredRows = useMemo(() => {
-    if (filter === "all") return rows;
-    if (filter === "uncategorized") {
-      return rows.filter((r) => r.categoryId == null);
-    }
-    return rows.filter((r) => r.categoryId === filter);
-  }, [rows, filter]);
-
-  const parsedRows = useMemo(
-    () =>
-      filteredRows.map((r) => ({
-        row: r,
-        payload: parseWorkspacePayload(r.payload),
-      })),
-    [filteredRows],
+  const groups = useMemo(
+    () => buildCategoryGroups(categories, rows, (r) => r.categoryId),
+    [categories, rows],
   );
 
   const addCategory = async () => {
@@ -260,7 +232,22 @@ export function WorkspaceSidebar({
       const cat = await createWorkspaceCategory(trimmed);
       await refresh();
       setSaveCategoryId(cat.id);
-      onFilterChange(cat.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const renameCategory = async (cat: Category) => {
+    const name = window.prompt("重命名工作区分类", cat.name);
+    if (name == null) return;
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("分类名称不能为空");
+      return;
+    }
+    try {
+      await updateWorkspaceCategory(cat.id, trimmed);
+      await refresh();
     } catch (e) {
       setError(String(e));
     }
@@ -276,6 +263,7 @@ export function WorkspaceSidebar({
     }
     try {
       await deleteWorkspaceCategory(cat.id);
+      if (saveCategoryId === cat.id) setSaveCategoryId(null);
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -384,154 +372,195 @@ export function WorkspaceSidebar({
             >
               刷新
             </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => void addCategory()}
+            >
+              新建分类
+            </button>
           </div>
-          <div className="workspace-category-row">
-            <label className="workspace-category-field">
-              <span>筛选</span>
-              <select
-                value={filterToSelectValue(filter)}
-                onChange={(e) =>
-                  onFilterChange(selectValueToFilter(e.target.value))
-                }
-                aria-label="按分类筛选工作区"
-              >
-                <option value="all">全部（{rows.length}）</option>
-                <option value="uncategorized">
-                  未分类（{rows.filter((r) => r.categoryId == null).length}）
+          <label className="workspace-category-field">
+            <span>保存到</span>
+            <select
+              value={saveCategoryId == null ? "" : String(saveCategoryId)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSaveCategoryId(v === "" ? null : Number(v));
+              }}
+              aria-label="保存工作区时的分类"
+              title="「保存当前」使用的分类"
+            >
+              <option value="">未分类</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={String(cat.id)}>
+                  {cat.name}
                 </option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={String(cat.id)}>
-                    {`${cat.name}（${rows.filter((r) => r.categoryId === cat.id).length}）`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="workspace-category-field">
-              <span>保存到</span>
-              <select
-                value={saveCategoryId == null ? "" : String(saveCategoryId)}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setSaveCategoryId(v === "" ? null : Number(v));
-                }}
-                aria-label="保存工作区时的分类"
-                title="「保存当前」使用的分类"
-              >
-                <option value="">未分类</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={String(cat.id)}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="workspace-category-manage">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => void addCategory()}
-              >
-                新建分类
-              </button>
-              {typeof filter === "number" ? (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  title="删除当前筛选的分类"
-                  onClick={() => {
-                    const cat = categories.find((c) => c.id === filter);
-                    if (cat) void removeCategory(cat);
-                  }}
-                >
-                  删除分类
-                </button>
-              ) : null}
-            </div>
-          </div>
+              ))}
+            </select>
+          </label>
           {error ? <div className="workspace-list-error">{error}</div> : null}
           {loading && rows.length === 0 ? (
             <div className="workspace-list-empty">加载中…</div>
-          ) : parsedRows.length === 0 ? (
+          ) : rows.length === 0 && categories.length === 0 ? (
             <div className="workspace-list-empty">
-              {rows.length === 0
-                ? "尚无保存的工作区。打开会话后可点「保存当前」。"
-                : "当前分类下没有工作区。"}
+              尚无保存的工作区。打开会话后可点「保存当前」。
             </div>
           ) : (
-            <ul className="workspace-list">
-              {parsedRows.map(({ row, payload }) => {
-                const summary = workspaceSummaryLabel(row, payload);
-                const panes = payload ? layoutPaneCount(payload) : 0;
-                const time = row.updatedAt
-                  ? new Date(row.updatedAt * 1000).toLocaleString()
-                  : "";
-                const catName =
-                  row.categoryId == null
-                    ? "未分类"
-                    : (categories.find((c) => c.id === row.categoryId)?.name ??
-                      "未分类");
+            <ul className="cat-tree-list">
+              {groups.map((group) => {
+                const collapsedGroup = isGroupCollapsed(collapsed, group.key);
                 return (
-                  <li key={row.id} className="workspace-list-item">
-                    <div className="workspace-list-meta">
-                      <span className="workspace-list-name">{row.name}</span>
-                      <span className="workspace-list-summary">
-                        {summary} · {catName}
-                      </span>
-                      {time ? (
-                        <span className="workspace-list-time">{time}</span>
+                  <li key={String(group.key)} className="cat-tree-group">
+                    <div className="cat-tree-group-header">
+                      <button
+                        type="button"
+                        className="cat-tree-group-toggle"
+                        aria-expanded={!collapsedGroup}
+                        title={collapsedGroup ? "展开" : "折叠"}
+                        onClick={() => toggleGroupCollapsed(group.key)}
+                      >
+                        <IconChevron collapsed={collapsedGroup} />
+                      </button>
+                      <button
+                        type="button"
+                        className="cat-tree-group-title"
+                        title="设为「保存当前」的分类"
+                        onClick={() =>
+                          setSaveCategoryId(
+                            group.key === "uncategorized" ? null : group.key,
+                          )
+                        }
+                      >
+                        <span className="cat-tree-group-label">
+                          {group.label}
+                        </span>
+                        <span className="cat-tree-group-count">
+                          {group.items.length}
+                        </span>
+                      </button>
+                      {group.category ? (
+                        <div className="cat-tree-group-actions">
+                          <button
+                            type="button"
+                            className="btn-secondary cat-tree-group-btn"
+                            title="重命名"
+                            onClick={() => void renameCategory(group.category!)}
+                          >
+                            重命名
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary cat-tree-group-btn"
+                            title="删除分类"
+                            onClick={() => void removeCategory(group.category!)}
+                          >
+                            删除
+                          </button>
+                        </div>
                       ) : null}
                     </div>
-                    <label className="workspace-item-category">
-                      <span className="sr-only">分类</span>
-                      <select
-                        value={
-                          row.categoryId == null ? "" : String(row.categoryId)
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          void changeCategory(
-                            row,
-                            v === "" ? null : Number(v),
-                          );
-                        }}
-                        title="更改分类"
-                      >
-                        <option value="">未分类</option>
-                        {categories.map((cat) => (
-                          <option key={cat.id} value={String(cat.id)}>
-                            {cat.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="workspace-list-actions">
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        disabled={!payload}
-                        title={panes ? `打开（${panes} 窗格）` : "打开"}
-                        onClick={() => {
-                          if (payload) onOpenWorkspace(row, payload);
-                        }}
-                      >
-                        打开
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        title="删除"
-                        onClick={() => {
-                          if (!window.confirm(`删除工作区「${row.name}」？`)) {
-                            return;
-                          }
-                          void deleteWorkspaceRow(row.id)
-                            .then(() => refresh())
-                            .catch((e) => setError(String(e)));
-                        }}
-                      >
-                        删除
-                      </button>
-                    </div>
+                    {!collapsedGroup ? (
+                      <ul className="cat-tree-children">
+                        {group.items.length === 0 ? (
+                          <li className="cat-tree-empty">暂无工作区</li>
+                        ) : (
+                          group.items.map((row) => {
+                            const payload = parseWorkspacePayload(row.payload);
+                            const summary = workspaceSummaryLabel(row, payload);
+                            const panes = payload
+                              ? layoutPaneCount(payload)
+                              : 0;
+                            const time = row.updatedAt
+                              ? new Date(row.updatedAt * 1000).toLocaleString()
+                              : "";
+                            return (
+                              <li
+                                key={row.id}
+                                className="workspace-list-item"
+                              >
+                                <div className="workspace-list-meta">
+                                  <span className="workspace-list-name">
+                                    {row.name}
+                                  </span>
+                                  <span className="workspace-list-summary">
+                                    {summary}
+                                  </span>
+                                  {time ? (
+                                    <span className="workspace-list-time">
+                                      {time}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <label className="workspace-item-category">
+                                  <span className="sr-only">移动到分类</span>
+                                  <select
+                                    value={
+                                      row.categoryId == null
+                                        ? ""
+                                        : String(row.categoryId)
+                                    }
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      void changeCategory(
+                                        row,
+                                        v === "" ? null : Number(v),
+                                      );
+                                    }}
+                                    title="移动到分类"
+                                  >
+                                    <option value="">未分类</option>
+                                    {categories.map((cat) => (
+                                      <option
+                                        key={cat.id}
+                                        value={String(cat.id)}
+                                      >
+                                        {cat.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <div className="workspace-list-actions">
+                                  <button
+                                    type="button"
+                                    className="btn-primary"
+                                    disabled={!payload}
+                                    title={
+                                      panes ? `打开（${panes} 窗格）` : "打开"
+                                    }
+                                    onClick={() => {
+                                      if (payload)
+                                        onOpenWorkspace(row, payload);
+                                    }}
+                                  >
+                                    打开
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    title="删除"
+                                    onClick={() => {
+                                      if (
+                                        !window.confirm(
+                                          `删除工作区「${row.name}」？`,
+                                        )
+                                      ) {
+                                        return;
+                                      }
+                                      void deleteWorkspaceRow(row.id)
+                                        .then(() => refresh())
+                                        .catch((e) => setError(String(e)));
+                                    }}
+                                  >
+                                    删除
+                                  </button>
+                                </div>
+                              </li>
+                            );
+                          })
+                        )}
+                      </ul>
+                    ) : null}
                   </li>
                 );
               })}
