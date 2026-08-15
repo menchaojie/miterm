@@ -6,15 +6,21 @@ export interface SavedCommandRow {
   body: string;
   sortOrder: number;
   updatedAt: number;
+  categoryId: number | null;
 }
 
 export async function listSavedCommands(): Promise<SavedCommandRow[]> {
-  return invoke("list_commands");
+  const rows = await invoke<SavedCommandRow[]>("list_commands");
+  return rows.map((r) => ({
+    ...r,
+    categoryId: r.categoryId ?? null,
+  }));
 }
 
 export async function saveCommandRow(params: {
   title: string;
   body: string;
+  categoryId?: number | null;
 }): Promise<SavedCommandRow> {
   return invoke("save_command", { params });
 }
@@ -23,6 +29,7 @@ export async function updateCommandRow(params: {
   id: number;
   title: string;
   body: string;
+  categoryId?: number | null;
 }): Promise<SavedCommandRow> {
   return invoke("update_command", { params });
 }

@@ -30,12 +30,13 @@ interface ConcurrentWorkspaceProps {
   onFilesOpenChange: (open: boolean) => void;
   canSaveWorkspace?: boolean;
   saveWorkspaceDisabledReason?: string;
-  onSaveWorkspace?: () => void;
+  onSaveWorkspace?: (categoryId: number | null) => void;
   onOpenWorkspace?: (
     row: SavedWorkspaceRow,
     payload: WorkspacePayload,
   ) => void;
   workspaceRefreshToken?: number;
+  workspaceCategories?: import("../types").Category[];
   onFocusSession: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
   onReconnectSession?: (sessionId: string) => void;
@@ -98,6 +99,7 @@ export function ConcurrentWorkspace({
   onSaveWorkspace,
   onOpenWorkspace,
   workspaceRefreshToken = 0,
+  workspaceCategories,
   onFocusSession,
   onCloseSession,
   onReconnectSession,
@@ -351,9 +353,10 @@ export function ConcurrentWorkspace({
           filesConnected={focusedTab?.status === "connected"}
           canSaveCurrent={canSaveWorkspace}
           saveDisabledReason={saveWorkspaceDisabledReason}
-          onSaveCurrent={() => onSaveWorkspace?.()}
+          onSaveCurrent={(categoryId) => onSaveWorkspace?.(categoryId)}
           onOpenWorkspace={(row, payload) => onOpenWorkspace?.(row, payload)}
           refreshToken={workspaceRefreshToken}
+          categories={workspaceCategories}
           canInjectCommand={canInjectCommand}
           injectCommandDisabledReason="请先聚焦已连接的终端窗格"
           onInjectCommand={injectSavedCommand}

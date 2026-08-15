@@ -16,6 +16,7 @@ export interface SavedWorkspaceRow {
   kind: WorkspaceKind;
   payload: string;
   updatedAt: number;
+  categoryId: number | null;
 }
 
 /** 持久化布局：leaf 存 savedHostId + cwd，不存瞬时 sessionId */
@@ -197,6 +198,7 @@ export async function listWorkspaces(): Promise<SavedWorkspaceRow[]> {
   return rows.map((r) => ({
     ...r,
     kind: r.kind === "group" ? "group" : "folder",
+    categoryId: r.categoryId ?? null,
   }));
 }
 
@@ -204,6 +206,7 @@ export async function saveWorkspaceRow(params: {
   name: string;
   kind: WorkspaceKind;
   payload: string;
+  categoryId?: number | null;
 }): Promise<SavedWorkspaceRow> {
   return invoke("save_workspace", { params });
 }
@@ -213,6 +216,7 @@ export async function updateWorkspaceRow(params: {
   name: string;
   kind: WorkspaceKind;
   payload: string;
+  categoryId?: number | null;
 }): Promise<SavedWorkspaceRow> {
   return invoke("update_workspace", { params });
 }

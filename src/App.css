@@ -2354,6 +2354,49 @@ body.split-sash-dragging .split-sash-horizontal {
   flex: 0 0 auto;
 }
 
+.workspace-category-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace-category-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #9aa;
+}
+
+.workspace-category-field select,
+.workspace-item-category select {
+  width: 100%;
+  box-sizing: border-box;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.workspace-item-category {
+  display: block;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .workspace-list {
   list-style: none;
   margin: 0;
@@ -2433,7 +2476,8 @@ body.split-sash-dragging .split-sash-horizontal {
 }
 
 .saved-command-field input,
-.saved-command-field textarea {
+.saved-command-field textarea,
+.saved-command-field select {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -2444,6 +2488,12 @@ body.split-sash-dragging .split-sash-horizontal {
   padding: 6px 8px;
   font-family: inherit;
   resize: vertical;
+}
+
+.saved-command-field select {
+  height: 28px;
+  padding: 0 8px;
+  resize: none;
 }
 
 .saved-command-field textarea {

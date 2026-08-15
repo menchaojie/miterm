@@ -1221,51 +1221,56 @@ function App() {
     setSettingsOpen(false);
   }, []);
 
-  const handleSaveCurrentWorkspace = useCallback(async () => {
-    const name = window.prompt("工作区名称");
-    if (name == null) return;
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setListError("工作区名称不能为空");
-      return;
-    }
-
-    try {
-      if (activeFolder) {
-        const folder = normalizeHostFolder(activeFolder);
-        const folderSessions = sessionTabs.filter(
-          (t) => t.folderId === folder.id,
-        );
-        const payload = serializeFolderWorkspace(folder, folderSessions);
-        await saveWorkspaceRow({
-          name: trimmed,
-          kind: "folder",
-          payload: JSON.stringify(payload),
-        });
-      } else if (activeGroup) {
-        const groupSessions = sessionTabs.filter(
-          (t) => t.groupId === activeGroup.id,
-        );
-        const payload = serializeGroupWorkspace(activeGroup, groupSessions);
-        if (!payload) {
-          setListError("并发工作区至少需要 2 台有效主机");
-          return;
-        }
-        await saveWorkspaceRow({
-          name: trimmed,
-          kind: "group",
-          payload: JSON.stringify(payload),
-        });
-      } else {
-        setListError("请先打开主机夹或并发会话再保存工作区");
+  const handleSaveCurrentWorkspace = useCallback(
+    async (categoryId: number | null = null) => {
+      const name = window.prompt("工作区名称");
+      if (name == null) return;
+      const trimmed = name.trim();
+      if (!trimmed) {
+        setListError("工作区名称不能为空");
         return;
       }
-      setListError("");
-      setWorkspaceRefreshToken((n) => n + 1);
-    } catch (e) {
-      setListError(String(e));
-    }
-  }, [activeFolder, activeGroup, sessionTabs]);
+
+      try {
+        if (activeFolder) {
+          const folder = normalizeHostFolder(activeFolder);
+          const folderSessions = sessionTabs.filter(
+            (t) => t.folderId === folder.id,
+          );
+          const payload = serializeFolderWorkspace(folder, folderSessions);
+          await saveWorkspaceRow({
+            name: trimmed,
+            kind: "folder",
+            payload: JSON.stringify(payload),
+            categoryId,
+          });
+        } else if (activeGroup) {
+          const groupSessions = sessionTabs.filter(
+            (t) => t.groupId === activeGroup.id,
+          );
+          const payload = serializeGroupWorkspace(activeGroup, groupSessions);
+          if (!payload) {
+            setListError("并发工作区至少需要 2 台有效主机");
+            return;
+          }
+          await saveWorkspaceRow({
+            name: trimmed,
+            kind: "group",
+            payload: JSON.stringify(payload),
+            categoryId,
+          });
+        } else {
+          setListError("请先打开主机夹或并发会话再保存工作区");
+          return;
+        }
+        setListError("");
+        setWorkspaceRefreshToken((n) => n + 1);
+      } catch (e) {
+        setListError(String(e));
+      }
+    },
+    [activeFolder, activeGroup, sessionTabs],
+  );
 
   const handleOpenWorkspace = useCallback(
     async (_row: SavedWorkspaceRow, payload: WorkspacePayload) => {
@@ -1689,6 +1694,7 @@ function App() {
                   }))
                 }
                 filesAvailable={false}
+                categories={categories}
                 canSaveCurrent={false}
                 saveDisabledReason="请先打开主机夹或并发会话"
                 onSaveCurrent={() => undefined}
@@ -1768,8 +1774,9 @@ function App() {
                   }
                   fontSize={settings.terminalFontSize}
                   canSaveWorkspace
-                  onSaveWorkspace={() => {
-                    void handleSaveCurrentWorkspace();
+                  workspaceCategories={categories}
+                  onSaveWorkspace={(categoryId) => {
+                    void handleSaveCurrentWorkspace(categoryId);
                   }}
                   onOpenWorkspace={(row, payload) => {
                     void handleOpenWorkspace(row, payload);
@@ -1836,8 +1843,9 @@ function App() {
                   }
                   fontSize={settings.terminalFontSize}
                   canSaveWorkspace
-                  onSaveWorkspace={() => {
-                    void handleSaveCurrentWorkspace();
+                  workspaceCategories={categories}
+                  onSaveWorkspace={(categoryId) => {
+                    void handleSaveCurrentWorkspace(categoryId);
                   }}
                   onOpenWorkspace={(row, payload) => {
                     void handleOpenWorkspace(row, payload);

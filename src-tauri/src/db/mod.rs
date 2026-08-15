@@ -81,6 +81,7 @@ pub struct SavedWorkspace {
     pub kind: String,
     pub payload: String,
     pub updated_at: i64,
+    pub category_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +90,8 @@ pub struct SaveWorkspaceParams {
     pub name: String,
     pub kind: String,
     pub payload: String,
+    #[serde(default)]
+    pub category_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +101,8 @@ pub struct UpdateWorkspaceParams {
     pub name: String,
     pub kind: String,
     pub payload: String,
+    #[serde(default)]
+    pub category_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +113,7 @@ pub struct SavedCommand {
     pub body: String,
     pub sort_order: i64,
     pub updated_at: i64,
+    pub category_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +121,8 @@ pub struct SavedCommand {
 pub struct SaveCommandParams {
     pub title: String,
     pub body: String,
+    #[serde(default)]
+    pub category_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,6 +131,8 @@ pub struct UpdateCommandParams {
     pub id: i64,
     pub title: String,
     pub body: String,
+    #[serde(default)]
+    pub category_id: Option<i64>,
 }
 
 fn resolve_name(name: &str, fallback: &str) -> String {
@@ -221,6 +231,28 @@ fn migrate_saved_hosts(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn migrate_workspaces(conn: &Connection) -> Result<(), String> {
+    if !table_has_column(conn, "workspaces", "category_id") {
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL",
+            [],
+        )
+        .map_err(|e| format!("migrate workspaces category_id: {e}"))?;
+    }
+    Ok(())
+}
+
+fn migrate_saved_commands(conn: &Connection) -> Result<(), String> {
+    if !table_has_column(conn, "saved_commands", "category_id") {
+        conn.execute(
+            "ALTER TABLE saved_commands ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL",
+            [],
+        )
+        .map_err(|e| format!("migrate saved_commands category_id: {e}"))?;
+    }
+    Ok(())
+}
+
 pub struct HostStore {
     conn: Mutex<Connection>,
 }
@@ -258,19 +290,23 @@ impl HostStore {
                name TEXT NOT NULL,
                kind TEXT NOT NULL,
                payload TEXT NOT NULL,
-               updated_at INTEGER NOT NULL
+               updated_at INTEGER NOT NULL,
+               category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
              );
              CREATE TABLE IF NOT EXISTS saved_commands (
                id INTEGER PRIMARY KEY AUTOINCREMENT,
                title TEXT NOT NULL,
                body TEXT NOT NULL,
                sort_order INTEGER NOT NULL DEFAULT 0,
-               updated_at INTEGER NOT NULL
+               updated_at INTEGER NOT NULL,
+               category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL
              );",
         )
         .map_err(|e| format!("init schema: {e}"))?;
 
         migrate_saved_hosts(&conn)?;
+        migrate_workspaces(&conn)?;
+        migrate_saved_commands(&conn)?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -363,6 +399,16 @@ impl HostStore {
             params![id],
         )
         .map_err(|e| format!("clear hosts category: {e}"))?;
+        conn.execute(
+            "UPDATE workspaces SET category_id = NULL WHERE category_id = ?1",
+            params![id],
+        )
+        .map_err(|e| format!("clear workspaces category: {e}"))?;
+        conn.execute(
+            "UPDATE saved_commands SET category_id = NULL WHERE category_id = ?1",
+            params![id],
+        )
+        .map_err(|e| format!("clear commands category: {e}"))?;
         let n = conn
             .execute("DELETE FROM categories WHERE id = ?1", params![id])
             .map_err(|e| format!("delete category: {e}"))?;
@@ -620,7 +666,7 @@ impl HostStore {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, kind, payload, updated_at FROM workspaces
+                "SELECT id, name, kind, payload, updated_at, category_id FROM workspaces
                  ORDER BY updated_at DESC, id DESC",
             )
             .map_err(|e| format!("prepare workspaces: {e}"))?;
@@ -632,6 +678,7 @@ impl HostStore {
                     kind: row.get(2)?,
                     payload: row.get(3)?,
                     updated_at: row.get(4)?,
+                    category_id: row.get(5)?,
                 })
             })
             .map_err(|e| format!("query workspaces: {e}"))?;
@@ -654,14 +701,27 @@ impl HostStore {
         if params.payload.trim().is_empty() {
             return Err("工作区内容不能为空".into());
         }
+        let category_id = params.category_id;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let conn = self.conn.lock();
+        if let Some(cid) = category_id {
+            let ok: bool = conn
+                .query_row(
+                    "SELECT 1 FROM categories WHERE id = ?1",
+                    params![cid],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if !ok {
+                return Err("分类不存在".into());
+            }
+        }
         conn.execute(
-            "INSERT INTO workspaces (name, kind, payload, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params![name, kind, params.payload, now],
+            "INSERT INTO workspaces (name, kind, payload, updated_at, category_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![name, kind, params.payload, now, category_id],
         )
         .map_err(|e| format!("save workspace: {e}"))?;
         let id = conn.last_insert_rowid();
@@ -671,6 +731,7 @@ impl HostStore {
             kind: kind.to_string(),
             payload: params.payload,
             updated_at: now,
+            category_id,
         })
     }
 
@@ -689,15 +750,28 @@ impl HostStore {
         if params.payload.trim().is_empty() {
             return Err("工作区内容不能为空".into());
         }
+        let category_id = params.category_id;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let conn = self.conn.lock();
+        if let Some(cid) = category_id {
+            let ok: bool = conn
+                .query_row(
+                    "SELECT 1 FROM categories WHERE id = ?1",
+                    params![cid],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if !ok {
+                return Err("分类不存在".into());
+            }
+        }
         let n = conn
             .execute(
-                "UPDATE workspaces SET name = ?1, kind = ?2, payload = ?3, updated_at = ?4 WHERE id = ?5",
-                params![name, kind, params.payload, now, params.id],
+                "UPDATE workspaces SET name = ?1, kind = ?2, payload = ?3, updated_at = ?4, category_id = ?5 WHERE id = ?6",
+                params![name, kind, params.payload, now, category_id, params.id],
             )
             .map_err(|e| format!("update workspace: {e}"))?;
         if n == 0 {
@@ -709,6 +783,7 @@ impl HostStore {
             kind: kind.to_string(),
             payload: params.payload,
             updated_at: now,
+            category_id,
         })
     }
 
@@ -727,7 +802,7 @@ impl HostStore {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT id, title, body, sort_order, updated_at FROM saved_commands
+                "SELECT id, title, body, sort_order, updated_at, category_id FROM saved_commands
                  ORDER BY sort_order ASC, updated_at DESC, id DESC",
             )
             .map_err(|e| format!("prepare commands: {e}"))?;
@@ -739,6 +814,7 @@ impl HostStore {
                     body: row.get(2)?,
                     sort_order: row.get(3)?,
                     updated_at: row.get(4)?,
+                    category_id: row.get(5)?,
                 })
             })
             .map_err(|e| format!("query commands: {e}"))?;
@@ -758,11 +834,24 @@ impl HostStore {
         if body.trim().is_empty() {
             return Err("命令内容不能为空".into());
         }
+        let category_id = params.category_id;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let conn = self.conn.lock();
+        if let Some(cid) = category_id {
+            let ok: bool = conn
+                .query_row(
+                    "SELECT 1 FROM categories WHERE id = ?1",
+                    params![cid],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if !ok {
+                return Err("分类不存在".into());
+            }
+        }
         let next_order: i64 = conn
             .query_row(
                 "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM saved_commands",
@@ -771,8 +860,8 @@ impl HostStore {
             )
             .unwrap_or(1);
         conn.execute(
-            "INSERT INTO saved_commands (title, body, sort_order, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params![title, body, next_order, now],
+            "INSERT INTO saved_commands (title, body, sort_order, updated_at, category_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![title, body, next_order, now, category_id],
         )
         .map_err(|e| format!("save command: {e}"))?;
         let id = conn.last_insert_rowid();
@@ -782,6 +871,7 @@ impl HostStore {
             body: body.to_string(),
             sort_order: next_order,
             updated_at: now,
+            category_id,
         })
     }
 
@@ -794,11 +884,24 @@ impl HostStore {
         if body.trim().is_empty() {
             return Err("命令内容不能为空".into());
         }
+        let category_id = params.category_id;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let conn = self.conn.lock();
+        if let Some(cid) = category_id {
+            let ok: bool = conn
+                .query_row(
+                    "SELECT 1 FROM categories WHERE id = ?1",
+                    params![cid],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if !ok {
+                return Err("分类不存在".into());
+            }
+        }
         let sort_order: i64 = conn
             .query_row(
                 "SELECT sort_order FROM saved_commands WHERE id = ?1",
@@ -808,8 +911,8 @@ impl HostStore {
             .map_err(|_| "command not found".to_string())?;
         let n = conn
             .execute(
-                "UPDATE saved_commands SET title = ?1, body = ?2, updated_at = ?3 WHERE id = ?4",
-                params![title, body, now, params.id],
+                "UPDATE saved_commands SET title = ?1, body = ?2, updated_at = ?3, category_id = ?4 WHERE id = ?5",
+                params![title, body, now, category_id, params.id],
             )
             .map_err(|e| format!("update command: {e}"))?;
         if n == 0 {
@@ -821,6 +924,7 @@ impl HostStore {
             body: body.to_string(),
             sort_order,
             updated_at: now,
+            category_id,
         })
     }
 

@@ -41,12 +41,14 @@ interface TerminalWorkspaceProps {
   /** 工作区侧栏 */
   canSaveWorkspace?: boolean;
   saveWorkspaceDisabledReason?: string;
-  onSaveWorkspace?: () => void;
+  onSaveWorkspace?: (categoryId: number | null) => void;
   onOpenWorkspace?: (
     row: import("../workspace").SavedWorkspaceRow,
     payload: import("../workspace").WorkspacePayload,
   ) => void;
   workspaceRefreshToken?: number;
+  /** 与主机共用的分类（工作区筛选/归属） */
+  workspaceCategories?: import("../types").Category[];
   onSelectSubTab: (subTabId: string) => void;
   onSelectSession: (sessionId: string) => void;
   onCloseSubTab: (subTabId: string) => void;
@@ -335,6 +337,7 @@ export function TerminalWorkspace({
   onSaveWorkspace,
   onOpenWorkspace,
   workspaceRefreshToken = 0,
+  workspaceCategories,
   onSelectSubTab,
   onSelectSession,
   onCloseSubTab,
@@ -703,11 +706,12 @@ export function TerminalWorkspace({
             filesConnected={activeTab?.status === "connected"}
             canSaveCurrent={canSaveWorkspace}
             saveDisabledReason={saveWorkspaceDisabledReason}
-            onSaveCurrent={() => onSaveWorkspace?.()}
+            onSaveCurrent={(categoryId) => onSaveWorkspace?.(categoryId)}
             onOpenWorkspace={(row, payload) =>
               onOpenWorkspace?.(row as SavedWorkspaceRow, payload as WorkspacePayload)
             }
             refreshToken={workspaceRefreshToken}
+            categories={workspaceCategories}
             canInjectCommand={canInjectCommand}
             injectCommandDisabledReason="请先聚焦已连接的终端窗格"
             onInjectCommand={injectSavedCommand}
