@@ -16,7 +16,7 @@ import type {
   SshOutputEvent,
 } from "../types";
 
-const CURSOR_COLOR = "#4fc3f7";
+const CURSOR_COLOR = "#7eb4c8";
 /** 非输入态实心块：贴近底色，弱化存在感 */
 const CURSOR_DIM = "#2c2c2c";
 
