@@ -28,6 +28,8 @@ interface TerminalViewProps {
   systemNotice?: { seq: number; text: string } | null;
   /** 会话已退出 / 重连失败时显示手动重连 */
   onReconnect?: () => void;
+  /** 会话已退出 / 出错时关闭此窗格或连接 */
+  onClose?: () => void;
   onCwdChange?: (cwd: string | null) => void;
   homeHint?: string | null;
   initialCwd?: string | null;
@@ -46,6 +48,7 @@ export function TerminalView({
   cursorColor = CURSOR_COLOR,
   systemNotice = null,
   onReconnect,
+  onClose,
   onCwdChange,
   homeHint = null,
   initialCwd = null,
@@ -70,8 +73,8 @@ export function TerminalView({
   );
 
   const interactive = status === "connected";
-  const showReconnect =
-    Boolean(onReconnect) &&
+  const showEndActions =
+    (Boolean(onReconnect) || Boolean(onClose)) &&
     (status === "exited" || status === "error");
 
   return (
@@ -80,16 +83,29 @@ export function TerminalView({
         ref={containerRef}
         className={`terminal-container${interactive ? "" : " terminal-disabled"}`}
       />
-      {showReconnect ? (
+      {showEndActions ? (
         <div className="terminal-reconnect-bar">
           <span className="terminal-reconnect-text">会话已断开</span>
-          <button
-            type="button"
-            className="terminal-reconnect-btn"
-            onClick={onReconnect}
-          >
-            重新连接
-          </button>
+          <div className="terminal-reconnect-actions">
+            {onReconnect ? (
+              <button
+                type="button"
+                className="terminal-reconnect-btn"
+                onClick={onReconnect}
+              >
+                重新连接
+              </button>
+            ) : null}
+            {onClose ? (
+              <button
+                type="button"
+                className="terminal-reconnect-btn terminal-close-btn"
+                onClick={onClose}
+              >
+                关闭窗口
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>

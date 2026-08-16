@@ -104,7 +104,7 @@ function clampCtxMenuPos(
 
 function IconSession() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
       <rect
         x="1.5"
         y="2.5"
@@ -673,6 +673,7 @@ export function TerminalWorkspace({
                   ? () => onReconnectSession(tab.id)
                   : undefined
               }
+              onClose={() => onCloseSession(tab.id)}
               onCwdChange={
                 onCwdChange ? (cwd) => onCwdChange(tab.id, cwd) : undefined
               }
@@ -758,117 +759,117 @@ export function TerminalWorkspace({
         ) : null}
 
         <div className="terminal-workspace-stages split-root">
-          {subTabs.map((st) => {
-            const active = st.id === activeSubTabId;
-            const paneSplit = countLayoutLeaves(st.layout) > 1;
-            return (
-              <div
-                key={st.id}
-                className={`subtab-stage${active ? " is-active" : ""}`}
-                aria-hidden={!active}
-              >
-                {renderLayout(st.layout, {
-                  interactive: active,
-                  paneSplit: active && paneSplit,
-                })}
-              </div>
-            );
-          })}
-
           {workspaceActive ? (
-            <div className="solo-subtab-hit">
-              <div className="solo-subtab-chrome">
-                <div className="solo-subtabs" role="tablist" aria-label="二级会话">
-                  {subTabs.map((st, index) => {
-                    const selected = st.id === activeSubTabId;
-                    const leafIds = collectLayoutSessionIds(st.layout);
-                    const anyError = leafIds.some(
-                      (id) => byId(id)?.status === "error",
-                    );
-                    const anyConnecting = leafIds.some((id) => {
-                      const s = byId(id)?.status;
-                      return s === "connecting" || s === "reconnecting";
-                    });
-                    const paneCount = leafIds.length;
-                    const name =
-                      paneCount > 1
-                        ? `连接 ${index + 1}（${paneCount} 窗格）`
-                        : `连接 ${index + 1}`;
-                    return (
-                      <div
-                        key={st.id}
-                        className={`solo-subtab${selected ? " active" : ""}${
-                          anyError ? " error" : ""
-                        }${anyConnecting ? " connecting" : ""}`}
+            <div className="solo-subtab-chrome">
+              <div className="solo-subtabs" role="tablist" aria-label="二级会话">
+                {subTabs.map((st, index) => {
+                  const selected = st.id === activeSubTabId;
+                  const leafIds = collectLayoutSessionIds(st.layout);
+                  const anyError = leafIds.some(
+                    (id) => byId(id)?.status === "error",
+                  );
+                  const anyConnecting = leafIds.some((id) => {
+                    const s = byId(id)?.status;
+                    return s === "connecting" || s === "reconnecting";
+                  });
+                  const paneCount = leafIds.length;
+                  const name =
+                    paneCount > 1
+                      ? `连接 ${index + 1}（${paneCount} 窗格）`
+                      : `连接 ${index + 1}`;
+                  return (
+                    <div
+                      key={st.id}
+                      className={`solo-subtab${selected ? " active" : ""}${
+                        anyError ? " error" : ""
+                      }${anyConnecting ? " connecting" : ""}`}
+                    >
+                      <button
+                        type="button"
+                        className="solo-subtab-label"
+                        role="tab"
+                        aria-selected={selected}
+                        title={name}
+                        aria-label={name}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectSubTab(st.id);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
                       >
-                        <button
-                          type="button"
-                          className="solo-subtab-label"
-                          role="tab"
-                          aria-selected={selected}
-                          title={name}
-                          aria-label={name}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectSubTab(st.id);
-                          }}
-                          onMouseDown={(e) => e.stopPropagation()}
-                        >
-                          <IconSession />
-                          <span className="solo-subtab-num">{index + 1}</span>
-                          {paneCount > 1 ? (
-                            <span className="solo-subtab-panes">
-                              {paneCount}
-                            </span>
-                          ) : null}
-                        </button>
-                        <button
-                          type="button"
-                          className="solo-subtab-close"
-                          title="关闭此二级会话"
-                          aria-label={`关闭 ${name}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onCloseSubTab(st.id);
-                          }}
-                          onMouseDown={(e) => e.stopPropagation()}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    className="solo-subtab-add"
-                    title="新建二级会话"
-                    aria-label="新建二级会话"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onAddSession();
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    +
-                  </button>
-                </div>
+                        <IconSession />
+                        <span className="solo-subtab-num">{index + 1}</span>
+                        {paneCount > 1 ? (
+                          <span className="solo-subtab-panes">
+                            {paneCount}
+                          </span>
+                        ) : null}
+                      </button>
+                      <button
+                        type="button"
+                        className="solo-subtab-close"
+                        title="关闭此二级会话"
+                        aria-label={`关闭 ${name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCloseSubTab(st.id);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
                 <button
                   type="button"
-                  className={`solo-subtab-files${filesOpen ? " active" : ""}`}
-                  title="侧栏（工作区 / 远程文件 / 命令）· Ctrl+Shift+E"
-                  aria-label="侧栏"
-                  aria-pressed={filesOpen}
+                  className="solo-subtab-add"
+                  title="新建二级会话"
+                  aria-label="新建二级会话"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onFilesOpenChange(!filesOpen);
+                    onAddSession();
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
-                  侧栏
+                  +
                 </button>
               </div>
+              <button
+                type="button"
+                className={`solo-subtab-files${filesOpen ? " active" : ""}`}
+                title="侧栏（工作区 / 远程文件 / 命令）· Ctrl+Shift+E"
+                aria-label="侧栏"
+                aria-pressed={filesOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFilesOpenChange(!filesOpen);
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                侧栏
+              </button>
             </div>
           ) : null}
+
+          <div className="terminal-workspace-stage-stack">
+            {subTabs.map((st) => {
+              const active = st.id === activeSubTabId;
+              const paneSplit = countLayoutLeaves(st.layout) > 1;
+              return (
+                <div
+                  key={st.id}
+                  className={`subtab-stage${active ? " is-active" : ""}`}
+                  aria-hidden={!active}
+                >
+                  {renderLayout(st.layout, {
+                    interactive: active,
+                    paneSplit: active && paneSplit,
+                  })}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 

@@ -427,8 +427,6 @@ export function ConcurrentWorkspace({
             const errored =
               tab.status === "error" || tab.status === "exited";
             const inSync = syncIds.has(tab.id);
-            const showFilesBtn =
-              tab.kind !== "local" && tab.status === "connected";
 
             return (
               <div
@@ -447,6 +445,47 @@ export function ConcurrentWorkspace({
                 onMouseDown={() => onFocusSession(tab.id)}
                 onContextMenuCapture={(e) => openCtxMenu(tab.id, e)}
               >
+                <div className="concurrent-cell-chrome">
+                  <button
+                    type="button"
+                    className={`concurrent-sync-btn${
+                      inSync ? " active" : ""
+                    }`}
+                    title={
+                      inSync
+                        ? "退出并发输入（键入不再同步到此会话）"
+                        : "加入并发输入"
+                    }
+                    aria-label={
+                      inSync ? `退出并发：${label}` : `加入并发：${label}`
+                    }
+                    aria-pressed={inSync}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleSync(tab.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    {inSync ? <IconSyncOn /> : <IconSyncOff />}
+                  </button>
+                  <span className="concurrent-cell-title" title={label}>
+                    {statusLabel(tab, label)}
+                  </span>
+                  <button
+                    type="button"
+                    className="concurrent-cell-close"
+                    title="关闭此连接"
+                    aria-label={`关闭 ${label}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseSession(tab.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    ×
+                  </button>
+                </div>
+
                 <div className="concurrent-cell-body">
                   <TerminalView
                     sessionId={tab.id}
@@ -473,6 +512,7 @@ export function ConcurrentWorkspace({
                         ? () => onReconnectSession(tab.id)
                         : undefined
                     }
+                    onClose={() => onCloseSession(tab.id)}
                     onCwdChange={
                       onCwdChange
                         ? (cwd) => onCwdChange(tab.id, cwd)
@@ -489,67 +529,6 @@ export function ConcurrentWorkspace({
                     {tab.errorMessage}
                   </div>
                 ) : null}
-
-                <div className="concurrent-cell-hit">
-                  <div className="concurrent-cell-chrome">
-                    <button
-                      type="button"
-                      className={`concurrent-sync-btn${
-                        inSync ? " active" : ""
-                      }`}
-                      title={
-                        inSync
-                          ? "退出并发输入（键入不再同步到此会话）"
-                          : "加入并发输入"
-                      }
-                      aria-label={
-                        inSync ? `退出并发：${label}` : `加入并发：${label}`
-                      }
-                      aria-pressed={inSync}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleSync(tab.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                    >
-                      {inSync ? <IconSyncOn /> : <IconSyncOff />}
-                    </button>
-                    <span className="concurrent-cell-title" title={label}>
-                      {statusLabel(tab, label)}
-                    </span>
-                    {showFilesBtn ? (
-                      <button
-                        type="button"
-                        className={`concurrent-files-btn${
-                          filesOpen && focused ? " active" : ""
-                        }`}
-                        title="侧栏（工作区 / 远程文件 / 命令）"
-                        aria-label={`侧栏：${label}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onFocusSession(tab.id);
-                          onFilesOpenChange(focused ? !filesOpen : true);
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                      >
-                        文件
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="concurrent-cell-close"
-                      title="关闭此连接"
-                      aria-label={`关闭 ${label}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onCloseSession(tab.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
               </div>
             );
           })}

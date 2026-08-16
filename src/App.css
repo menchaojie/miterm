@@ -26,12 +26,15 @@
   --font-lg: 15px;
 
   --control-h: 28px;
-  --chrome-btn: 26px;
+  --chrome-btn: 22px;
+  --subtab-bar-h: 20px;
   --icon-btn: 26px;
 
   /* 清新克制的冷灰 + 低饱和青蓝 */
   --bg-app: #12161a;
   --bg-elevated: #171c21;
+  --bg-tabbar: #1a2229;
+  --bg-subtab: #10161a;
   --bg-panel: #1a2026;
   --bg-input: #222930;
   --bg-hover: #2a323a;
@@ -1439,7 +1442,7 @@ a,
   display: flex;
   flex-direction: column;
   gap: 0;
-  background: var(--bg-elevated);
+  background: var(--bg-tabbar);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -1447,9 +1450,9 @@ a,
 .app-tabbar-top {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 2px 5px;
-  min-height: calc(var(--chrome-btn) + 4px);
+  gap: 2px;
+  padding: 1px 4px 0;
+  min-height: calc(var(--chrome-btn) + 2px);
 }
 
 .app-tabs {
@@ -1542,9 +1545,9 @@ a,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-left: 3px;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
   margin-right: 1px;
   padding: 0;
   border: none;
@@ -1574,7 +1577,7 @@ a,
 .app-tab.active {
   background: var(--accent-muted);
   border: none;
-  box-shadow: inset 0 -2px 0 var(--accent);
+  box-shadow: inset 0 -1px 0 var(--accent);
 }
 
 .app-tab.error {
@@ -2052,42 +2055,27 @@ a,
   position: relative;
 }
 
-/* 主机夹二级 Tab：顶部热区悬停才显示 */
-.solo-subtab-hit {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 28px;
-  z-index: 4;
-}
-
+/* 主机夹二级 Tab：常驻细条（比一级顶栏更深、略带冷色） */
 .solo-subtab-chrome {
-  height: 24px;
-  padding: 0 6px;
+  flex-shrink: 0;
+  height: var(--subtab-bar-h);
+  padding: 0 5px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   box-sizing: border-box;
-  background: linear-gradient(
-    180deg,
-    rgba(12, 12, 12, 0.72) 0%,
-    rgba(12, 12, 12, 0.4) 70%,
-    rgba(12, 12, 12, 0) 100%
-  );
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-2px);
-  transition:
-    opacity 0.12s ease,
-    transform 0.12s ease;
+  background: var(--bg-subtab);
+  border-bottom: 1px solid rgba(107, 163, 184, 0.18);
+  box-shadow: inset 0 1px 0 rgba(107, 163, 184, 0.06);
   user-select: none;
+  z-index: 2;
 }
 
-.solo-subtab-hit:hover .solo-subtab-chrome {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+.terminal-workspace-stage-stack {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
 }
 
 .solo-subtabs {
@@ -2095,7 +2083,7 @@ a,
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -2104,19 +2092,19 @@ a,
   display: inline-flex;
   align-items: stretch;
   gap: 0;
-  min-width: 72px;
-  height: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
-  background: rgba(28, 28, 28, 0.55);
-  color: rgba(180, 180, 180, 0.9);
+  min-width: 56px;
+  height: 16px;
+  border: 1px solid rgba(107, 163, 184, 0.16);
+  border-radius: 3px;
+  background: rgba(26, 34, 40, 0.85);
+  color: var(--text-muted);
   overflow: hidden;
 }
 
 .solo-subtab.active {
-  border-color: rgba(74, 122, 170, 0.65);
-  background: rgba(40, 52, 64, 0.75);
-  color: rgba(230, 230, 230, 0.95);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent-hover);
 }
 
 .solo-subtab.error {
@@ -2130,12 +2118,12 @@ a,
 
 .solo-subtab-label {
   flex: 1;
-  min-width: 48px;
+  min-width: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 0 10px;
+  gap: 4px;
+  padding: 0 6px;
   border: none;
   background: transparent;
   color: inherit;
@@ -2147,7 +2135,7 @@ a,
 }
 
 .solo-subtab-num {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 400;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -2156,27 +2144,27 @@ a,
 }
 
 .solo-subtab-panes {
-  margin-left: 2px;
-  padding: 0 4px;
-  border-radius: 3px;
-  font-size: 10px;
+  margin-left: 1px;
+  padding: 0 3px;
+  border-radius: 2px;
+  font-size: 9px;
   font-weight: 400;
-  line-height: 1.4;
-  color: #9fd6ef;
-  background: rgba(107, 163, 184, 0.18);
+  line-height: 1.35;
+  color: var(--accent-hover);
+  background: var(--accent-muted);
 }
 
 .solo-subtab-close {
   flex-shrink: 0;
-  width: 22px;
+  width: 16px;
   align-self: stretch;
   margin: 0;
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(107, 163, 184, 0.12);
   border-radius: 0;
   background: transparent;
   color: rgba(140, 140, 140, 0.75);
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1;
   cursor: pointer;
 }
@@ -2193,48 +2181,48 @@ a,
 
 .solo-subtab-add {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  background: rgba(28, 28, 28, 0.55);
-  color: rgba(180, 180, 180, 0.95);
-  font-size: 14px;
+  border: 1px solid rgba(107, 163, 184, 0.16);
+  border-radius: 3px;
+  background: rgba(26, 34, 40, 0.85);
+  color: var(--text-muted);
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
 }
 
 .solo-subtab-add:hover {
-  border-color: rgba(255, 255, 255, 0.22);
-  color: #fff;
-  background: rgba(40, 40, 40, 0.7);
+  border-color: var(--accent-border);
+  color: var(--accent-hover);
+  background: var(--accent-muted);
 }
 
 .solo-subtab-files {
   flex-shrink: 0;
   margin-left: auto;
-  height: 22px;
-  padding: 0 8px;
+  height: 16px;
+  padding: 0 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  background: rgba(28, 28, 28, 0.55);
-  color: rgba(180, 180, 180, 0.95);
-  font-size: 11px;
+  border: 1px solid rgba(107, 163, 184, 0.16);
+  border-radius: 3px;
+  background: rgba(26, 34, 40, 0.85);
+  color: var(--text-muted);
+  font-size: 10px;
   line-height: 1;
   cursor: pointer;
 }
 
 .solo-subtab-files:hover,
 .solo-subtab-files.active {
-  border-color: rgba(107, 163, 184, 0.45);
-  color: #e8f6fc;
-  background: rgba(40, 60, 80, 0.65);
+  border-color: var(--accent-border);
+  color: var(--accent-hover);
+  background: var(--accent-muted);
 }
 
 .solo-subtab.dimmed {
@@ -2517,42 +2505,20 @@ body.split-sash-dragging .split-sash-horizontal {
   position: relative;
 }
 
-/* 顶部热区：仅鼠标移入顶部才显示浮层（聚焦不自动展开） */
-.concurrent-cell-hit {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 26px;
-  z-index: 4;
-}
-
+/* 并发格顶栏：与主机夹二级条同色阶的常驻细条 */
 .concurrent-cell-chrome {
-  height: 22px;
-  padding: 0 4px 0 6px;
+  flex-shrink: 0;
+  height: var(--subtab-bar-h);
+  padding: 0 4px 0 5px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   box-sizing: border-box;
-  background: linear-gradient(
-    180deg,
-    rgba(12, 12, 12, 0.72) 0%,
-    rgba(12, 12, 12, 0.4) 70%,
-    rgba(12, 12, 12, 0) 100%
-  );
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-2px);
-  transition:
-    opacity 0.12s ease,
-    transform 0.12s ease;
+  background: var(--bg-subtab);
+  border-bottom: 1px solid rgba(107, 163, 184, 0.18);
+  box-shadow: inset 0 1px 0 rgba(107, 163, 184, 0.06);
   user-select: none;
-}
-
-.concurrent-cell-hit:hover .concurrent-cell-chrome {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+  z-index: 2;
 }
 
 .concurrent-sync-btn {
@@ -2560,26 +2526,26 @@ body.split-sash-dragging .split-sash-horizontal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 18px;
+  width: 16px;
+  height: 14px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(107, 163, 184, 0.16);
   border-radius: 3px;
-  background: rgba(28, 28, 28, 0.55);
-  color: rgba(160, 160, 160, 0.85);
+  background: rgba(26, 34, 40, 0.85);
+  color: var(--text-muted);
   cursor: pointer;
 }
 
 .concurrent-sync-btn:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  color: rgba(210, 210, 210, 0.95);
-  background: rgba(40, 40, 40, 0.7);
+  border-color: var(--accent-border);
+  color: var(--accent-hover);
+  background: var(--accent-muted);
 }
 
 .concurrent-sync-btn.active {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(36, 42, 48, 0.7);
-  color: rgba(180, 190, 200, 0.95);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent-hover);
 }
 
 .concurrent-cell-title {
@@ -2588,42 +2554,20 @@ body.split-sash-dragging .split-sash-horizontal {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  line-height: 1;
-  color: rgba(220, 220, 220, 0.92);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-}
-
-.concurrent-files-btn {
-  flex-shrink: 0;
-  margin-left: 4px;
-  height: 18px;
-  padding: 0 6px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 3px;
-  background: rgba(30, 30, 30, 0.55);
-  color: rgba(200, 200, 200, 0.92);
   font-size: 10px;
   line-height: 1;
-  cursor: pointer;
-}
-
-.concurrent-files-btn:hover,
-.concurrent-files-btn.active {
-  border-color: rgba(107, 163, 184, 0.45);
-  color: #e8f6fc;
-  background: rgba(40, 60, 80, 0.7);
+  color: var(--text-dim);
 }
 
 .concurrent-cell-close {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   border: none;
   border-radius: 3px;
   background: transparent;
-  color: rgba(180, 180, 180, 0.9);
-  font-size: 14px;
+  color: var(--text-muted);
+  font-size: 11px;
   line-height: 1;
   cursor: pointer;
 }
@@ -2692,6 +2636,13 @@ body.split-sash-dragging .split-sash-horizontal {
   color: rgba(230, 210, 160, 0.95);
 }
 
+.terminal-reconnect-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .terminal-reconnect-btn {
   flex-shrink: 0;
   padding: 3px 10px;
@@ -2704,8 +2655,20 @@ body.split-sash-dragging .split-sash-horizontal {
 }
 
 .terminal-reconnect-btn:hover {
-  border-color: rgba(210, 180, 100, 0.7);
-  background: rgba(90, 74, 36, 0.95);
+  border-color: rgba(200, 170, 100, 0.65);
+  background: rgba(90, 72, 36, 0.95);
+}
+
+.terminal-close-btn {
+  border-color: rgba(160, 120, 120, 0.4);
+  background: rgba(56, 40, 40, 0.85);
+  color: #e8d0d0;
+}
+
+.terminal-close-btn:hover {
+  border-color: rgba(200, 120, 120, 0.55);
+  background: rgba(80, 48, 48, 0.9);
+  color: #f5e0e0;
 }
 
 .terminal-container.terminal-hidden {
