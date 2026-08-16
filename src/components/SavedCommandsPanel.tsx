@@ -50,6 +50,7 @@ export function SavedCommandsPanel({
     loadCollapsedGroupKeys(CMD_COLLAPSE_KEY),
   );
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
+  const [detailRow, setDetailRow] = useState<SavedCommandRow | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftBody, setDraftBody] = useState("");
@@ -152,6 +153,7 @@ export function SavedCommandsPanel({
   };
 
   const startCreate = () => {
+    setDetailRow(null);
     setCreating(true);
     setEditingId(null);
     setDraftTitle("");
@@ -161,6 +163,7 @@ export function SavedCommandsPanel({
   };
 
   const startEdit = (row: SavedCommandRow) => {
+    setDetailRow(null);
     setCreating(false);
     setEditingId(row.id);
     setDraftTitle(row.title);
@@ -222,6 +225,9 @@ export function SavedCommandsPanel({
         body: row.body,
         categoryId,
       });
+      setDetailRow((prev) =>
+        prev && prev.id === row.id ? { ...prev, categoryId } : prev,
+      );
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -233,6 +239,7 @@ export function SavedCommandsPanel({
     try {
       await deleteCommandRow(row.id);
       if (editingId === row.id) cancelEdit();
+      if (detailRow?.id === row.id) setDetailRow(null);
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -243,6 +250,8 @@ export function SavedCommandsPanel({
     ? undefined
     : injectDisabledReason || "请先打开并聚焦已连接的终端";
 
+  const editorOpen = creating || editingId != null;
+
   return (
     <div className="workspace-list-pane saved-commands-pane">
       <div className="workspace-list-toolbar">
@@ -250,7 +259,7 @@ export function SavedCommandsPanel({
           type="button"
           className="btn-primary workspace-save-btn"
           onClick={startCreate}
-          disabled={creating || editingId != null}
+          disabled={editorOpen}
         >
           新建
         </button>
@@ -273,69 +282,11 @@ export function SavedCommandsPanel({
 
       {error ? <div className="workspace-list-error">{error}</div> : null}
 
-      {creating || editingId != null ? (
-        <div className="saved-command-editor">
-          <label className="saved-command-field">
-            <span>标题</span>
-            <input
-              type="text"
-              value={draftTitle}
-              placeholder="例如：查看磁盘"
-              onChange={(e) => setDraftTitle(e.target.value)}
-              autoFocus
-            />
-          </label>
-          <label className="saved-command-field">
-            <span>命令</span>
-            <textarea
-              value={draftBody}
-              placeholder={"例如：df -h\n可多行"}
-              rows={4}
-              onChange={(e) => setDraftBody(e.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <label className="saved-command-field">
-            <span>分类</span>
-            <select
-              value={draftCategoryId == null ? "" : String(draftCategoryId)}
-              onChange={(e) => {
-                const v = e.target.value;
-                setDraftCategoryId(v === "" ? null : Number(v));
-              }}
-            >
-              <option value="">未分类</option>
-              {categories.map((cat) => (
-                <option key={cat.id} value={String(cat.id)}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="saved-command-editor-actions">
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => void saveDraft()}
-            >
-              保存
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={cancelEdit}
-            >
-              取消
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       {loading && rows.length === 0 ? (
         <div className="workspace-list-empty">加载中…</div>
-      ) : rows.length === 0 && categories.length === 0 && !creating ? (
+      ) : rows.length === 0 && categories.length === 0 && !editorOpen ? (
         <div className="workspace-list-empty">
-          尚无保存的命令。点「新建」添加常用命令；点击标题填入终端，点「运行」填入并回车。
+          尚无保存的命令。点「新建」添加；点击名称查看详情并可填入/运行。
         </div>
       ) : (
         <ul className="cat-tree-list saved-command-list">
@@ -404,84 +355,15 @@ export function SavedCommandsPanel({
                       <li className="cat-tree-empty">暂无命令</li>
                     ) : (
                       group.items.map((row) => (
-                        <li
-                          key={row.id}
-                          className="workspace-list-item saved-command-item"
-                        >
+                        <li key={row.id} className="sidebar-name-item">
                           <button
                             type="button"
-                            className="saved-command-main"
-                            title={
-                              canInject
-                                ? `填入终端（不回车）\n${row.body}`
-                                : injectDisabledTitle
-                            }
-                            disabled={!canInject}
-                            onClick={() => onInject(row.body, { run: false })}
+                            className="sidebar-name-btn"
+                            title={row.title}
+                            onClick={() => setDetailRow(row)}
                           >
-                            <span className="workspace-list-name">
-                              {row.title}
-                            </span>
-                            <span className="workspace-list-summary saved-command-preview">
-                              {row.body.replace(/\s+/g, " ").trim()}
-                            </span>
+                            {row.title}
                           </button>
-                          <label className="workspace-item-category">
-                            <span className="sr-only">移动到分类</span>
-                            <select
-                              value={
-                                row.categoryId == null
-                                  ? ""
-                                  : String(row.categoryId)
-                              }
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                void changeCategory(
-                                  row,
-                                  v === "" ? null : Number(v),
-                                );
-                              }}
-                              title="移动到分类"
-                            >
-                              <option value="">未分类</option>
-                              {categories.map((cat) => (
-                                <option key={cat.id} value={String(cat.id)}>
-                                  {cat.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <div className="workspace-list-actions">
-                            <button
-                              type="button"
-                              className="btn-primary"
-                              disabled={!canInject}
-                              title={
-                                canInject
-                                  ? "填入终端并回车执行"
-                                  : injectDisabledTitle
-                              }
-                              onClick={() =>
-                                onInject(row.body, { run: true })
-                              }
-                            >
-                              运行
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-secondary"
-                              onClick={() => startEdit(row)}
-                            >
-                              编辑
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-secondary"
-                              onClick={() => void remove(row)}
-                            >
-                              删除
-                            </button>
-                          </div>
                         </li>
                       ))
                     )}
@@ -492,6 +374,198 @@ export function SavedCommandsPanel({
           })}
         </ul>
       )}
+
+      {detailRow ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setDetailRow(null);
+          }}
+        >
+          <div
+            className="sidebar-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="command-detail-title"
+          >
+            <header className="sidebar-detail-header">
+              <h3 id="command-detail-title" className="sidebar-detail-title">
+                {detailRow.title}
+              </h3>
+              <button
+                type="button"
+                className="remote-file-close"
+                title="关闭"
+                aria-label="关闭"
+                onClick={() => setDetailRow(null)}
+              >
+                ×
+              </button>
+            </header>
+            <div className="sidebar-detail-body">
+              <pre className="sidebar-detail-code">{detailRow.body}</pre>
+              <label className="saved-command-field">
+                <span>分类</span>
+                <select
+                  value={
+                    detailRow.categoryId == null
+                      ? ""
+                      : String(detailRow.categoryId)
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    void changeCategory(
+                      detailRow,
+                      v === "" ? null : Number(v),
+                    );
+                  }}
+                >
+                  <option value="">未分类</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={String(cat.id)}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="sidebar-detail-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!canInject}
+                title={
+                  canInject ? "填入终端并回车执行" : injectDisabledTitle
+                }
+                onClick={() => {
+                  onInject(detailRow.body, { run: true });
+                  setDetailRow(null);
+                }}
+              >
+                运行
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={!canInject}
+                title={
+                  canInject ? "填入终端（不回车）" : injectDisabledTitle
+                }
+                onClick={() => {
+                  onInject(detailRow.body, { run: false });
+                  setDetailRow(null);
+                }}
+              >
+                填入
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => startEdit(detailRow)}
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void remove(detailRow)}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editorOpen ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) cancelEdit();
+          }}
+        >
+          <div
+            className="sidebar-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="command-editor-title"
+          >
+            <header className="sidebar-detail-header">
+              <h3 id="command-editor-title" className="sidebar-detail-title">
+                {creating ? "新建命令" : "编辑命令"}
+              </h3>
+              <button
+                type="button"
+                className="remote-file-close"
+                title="关闭"
+                aria-label="关闭"
+                onClick={cancelEdit}
+              >
+                ×
+              </button>
+            </header>
+            <div className="sidebar-detail-body">
+              <label className="saved-command-field">
+                <span>标题</span>
+                <input
+                  type="text"
+                  value={draftTitle}
+                  placeholder="例如：查看磁盘"
+                  onChange={(e) => setDraftTitle(e.target.value)}
+                  autoFocus
+                />
+              </label>
+              <label className="saved-command-field">
+                <span>命令</span>
+                <textarea
+                  value={draftBody}
+                  placeholder={"例如：df -h\n可多行"}
+                  rows={5}
+                  onChange={(e) => setDraftBody(e.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+              <label className="saved-command-field">
+                <span>分类</span>
+                <select
+                  value={
+                    draftCategoryId == null ? "" : String(draftCategoryId)
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDraftCategoryId(v === "" ? null : Number(v));
+                  }}
+                >
+                  <option value="">未分类</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={String(cat.id)}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="sidebar-detail-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => void saveDraft()}
+              >
+                保存
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={cancelEdit}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

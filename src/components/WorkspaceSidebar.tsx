@@ -92,6 +92,110 @@ function saveSidebarPane(pane: SidebarPane) {
   }
 }
 
+function WorkspaceDetailModal({
+  row,
+  categories,
+  onClose,
+  onOpen,
+  onChangeCategory,
+  onDelete,
+}: {
+  row: SavedWorkspaceRow;
+  categories: Category[];
+  onClose: () => void;
+  onOpen: (row: SavedWorkspaceRow, payload: WorkspacePayload) => void;
+  onChangeCategory: (
+    row: SavedWorkspaceRow,
+    categoryId: number | null,
+  ) => void;
+  onDelete: (row: SavedWorkspaceRow) => void;
+}) {
+  const payload = parseWorkspacePayload(row.payload);
+  const summary = workspaceSummaryLabel(row, payload);
+  const panes = payload ? layoutPaneCount(payload) : 0;
+  const time = row.updatedAt
+    ? new Date(row.updatedAt * 1000).toLocaleString()
+    : "—";
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="sidebar-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="workspace-detail-title"
+      >
+        <header className="sidebar-detail-header">
+          <h3 id="workspace-detail-title" className="sidebar-detail-title">
+            {row.name}
+          </h3>
+          <button
+            type="button"
+            className="remote-file-close"
+            title="关闭"
+            aria-label="关闭"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </header>
+        <div className="sidebar-detail-body">
+          <p className="sidebar-detail-meta">
+            {summary}
+            {panes ? ` · ${panes} 窗格` : ""}
+          </p>
+          <p className="sidebar-detail-meta">更新于 {time}</p>
+          <label className="saved-command-field">
+            <span>分类</span>
+            <select
+              value={row.categoryId == null ? "" : String(row.categoryId)}
+              onChange={(e) => {
+                const v = e.target.value;
+                onChangeCategory(row, v === "" ? null : Number(v));
+              }}
+            >
+              <option value="">未分类</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={String(cat.id)}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="sidebar-detail-actions">
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={!payload}
+            onClick={() => {
+              if (payload) onOpen(row, payload);
+            }}
+          >
+            打开
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => onDelete(row)}
+          >
+            删除
+          </button>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export interface WorkspaceSidebarProps {
   onClose: () => void;
   /** 主页侧栏不可关闭时为 false */
@@ -157,9 +261,12 @@ export function WorkspaceSidebar({
     if (hostsAvailable) list.push("hosts");
     list.push("workspaces");
     if (filesAvailable) list.push("files");
-    list.push("commands");
+    // 命令仅会话页：主页无终端可注入
+    if (!hostsAvailable) list.push("commands");
     return list;
   }, [hostsAvailable, filesAvailable]);
+
+  const commandsAvailable = !hostsAvailable;
 
   const defaultPane: SidebarPane = hostsAvailable
     ? "hosts"
@@ -179,6 +286,7 @@ export function WorkspaceSidebar({
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [detailRow, setDetailRow] = useState<SavedWorkspaceRow | null>(null);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
   const effectivePane: SidebarPane = allowedPanes.includes(pane)
@@ -375,18 +483,20 @@ export function WorkspaceSidebar({
               远程文件
             </button>
           ) : null}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={effectivePane === "commands"}
-            className={`workspace-sidebar-tab${
-              effectivePane === "commands" ? " active" : ""
-            }`}
-            title="常用命令：填入或运行到当前终端"
-            onClick={() => selectPane("commands")}
-          >
-            命令
-          </button>
+          {commandsAvailable ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={effectivePane === "commands"}
+              className={`workspace-sidebar-tab${
+                effectivePane === "commands" ? " active" : ""
+              }`}
+              title="常用命令：填入或运行到当前终端"
+              onClick={() => selectPane("commands")}
+            >
+              命令
+            </button>
+          ) : null}
         </div>
         {closable ? (
           <button
@@ -538,99 +648,18 @@ export function WorkspaceSidebar({
                         {group.items.length === 0 ? (
                           <li className="cat-tree-empty">暂无工作区</li>
                         ) : (
-                          group.items.map((row) => {
-                            const payload = parseWorkspacePayload(row.payload);
-                            const summary = workspaceSummaryLabel(row, payload);
-                            const panes = payload
-                              ? layoutPaneCount(payload)
-                              : 0;
-                            const time = row.updatedAt
-                              ? new Date(row.updatedAt * 1000).toLocaleString()
-                              : "";
-                            return (
-                              <li
-                                key={row.id}
-                                className="workspace-list-item"
+                          group.items.map((row) => (
+                            <li key={row.id} className="sidebar-name-item">
+                              <button
+                                type="button"
+                                className="sidebar-name-btn"
+                                title={row.name}
+                                onClick={() => setDetailRow(row)}
                               >
-                                <div className="workspace-list-meta">
-                                  <span className="workspace-list-name">
-                                    {row.name}
-                                  </span>
-                                  <span className="workspace-list-summary">
-                                    {summary}
-                                  </span>
-                                  {time ? (
-                                    <span className="workspace-list-time">
-                                      {time}
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <label className="workspace-item-category">
-                                  <span className="sr-only">移动到分类</span>
-                                  <select
-                                    value={
-                                      row.categoryId == null
-                                        ? ""
-                                        : String(row.categoryId)
-                                    }
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      void changeCategory(
-                                        row,
-                                        v === "" ? null : Number(v),
-                                      );
-                                    }}
-                                    title="移动到分类"
-                                  >
-                                    <option value="">未分类</option>
-                                    {categories.map((cat) => (
-                                      <option
-                                        key={cat.id}
-                                        value={String(cat.id)}
-                                      >
-                                        {cat.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <div className="workspace-list-actions">
-                                  <button
-                                    type="button"
-                                    className="btn-primary"
-                                    disabled={!payload}
-                                    title={
-                                      panes ? `打开（${panes} 窗格）` : "打开"
-                                    }
-                                    onClick={() => {
-                                      if (payload)
-                                        onOpenWorkspace(row, payload);
-                                    }}
-                                  >
-                                    打开
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn-secondary"
-                                    title="删除"
-                                    onClick={() => {
-                                      if (
-                                        !window.confirm(
-                                          `删除工作区「${row.name}」？`,
-                                        )
-                                      ) {
-                                        return;
-                                      }
-                                      void deleteWorkspaceRow(row.id)
-                                        .then(() => refresh())
-                                        .catch((e) => setError(String(e)));
-                                    }}
-                                  >
-                                    删除
-                                  </button>
-                                </div>
-                              </li>
-                            );
-                          })
+                                {row.name}
+                              </button>
+                            </li>
+                          ))
                         )}
                       </ul>
                     ) : null}
@@ -639,8 +668,37 @@ export function WorkspaceSidebar({
               })}
             </ul>
           )}
+          {detailRow ? (
+            <WorkspaceDetailModal
+              row={detailRow}
+              categories={categories}
+              onClose={() => setDetailRow(null)}
+              onOpen={(row, payload) => {
+                onOpenWorkspace(row, payload);
+                setDetailRow(null);
+              }}
+              onChangeCategory={(row, categoryId) => {
+                void changeCategory(row, categoryId).then(() => {
+                  setDetailRow((prev) =>
+                    prev && prev.id === row.id
+                      ? { ...prev, categoryId }
+                      : prev,
+                  );
+                });
+              }}
+              onDelete={(row) => {
+                if (!window.confirm(`删除工作区「${row.name}」？`)) return;
+                void deleteWorkspaceRow(row.id)
+                  .then(() => {
+                    setDetailRow(null);
+                    return refresh();
+                  })
+                  .catch((e) => setError(String(e)));
+              }}
+            />
+          ) : null}
         </div>
-      ) : effectivePane === "commands" ? (
+      ) : effectivePane === "commands" && commandsAvailable ? (
         <SavedCommandsPanel
           canInject={canInjectCommand}
           injectDisabledReason={injectCommandDisabledReason}
