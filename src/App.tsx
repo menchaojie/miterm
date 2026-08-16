@@ -1510,13 +1510,8 @@ function App() {
           e.stopPropagation();
           if (e.repeat) return;
 
-          if (onHostsTab) {
-            setRemoteFilesOpenMap((prev) => ({
-              ...prev,
-              [HOSTS_TAB_ID]: !Boolean(prev[HOSTS_TAB_ID]),
-            }));
-            return;
-          }
+          // 主页侧栏常开，不切换关闭
+          if (onHostsTab) return;
 
           let workspaceId: string | null = null;
           if (activeFolder) workspaceId = activeFolder.id;
@@ -1724,26 +1719,29 @@ function App() {
           aria-hidden={!onHostsTab}
         >
           <div className="hosts-panel-main">
-            {Boolean(remoteFilesOpenMap[HOSTS_TAB_ID]) ? (
-              <WorkspaceSidebar
-                onClose={() =>
-                  setRemoteFilesOpenMap((prev) => ({
-                    ...prev,
-                    [HOSTS_TAB_ID]: false,
-                  }))
-                }
-                filesAvailable={false}
-                canSaveCurrent={false}
-                saveDisabledReason="请先打开主机夹或并发会话"
-                onSaveCurrent={() => undefined}
-                onOpenWorkspace={(row, payload) => {
-                  void handleOpenWorkspace(row, payload);
-                }}
-                refreshToken={workspaceRefreshToken}
-                canInjectCommand={false}
-                injectCommandDisabledReason="请先打开终端会话后再填入命令"
-              />
-            ) : null}
+            <WorkspaceSidebar
+              onClose={() => undefined}
+              closable={false}
+              hostsAvailable
+              hosts={savedHosts}
+              hostCategories={categories}
+              hostFilter={selectedFilter}
+              onHostFilter={setSelectedFilter}
+              onAddHost={openAdd}
+              onAddHostCategory={() => void handleAddCategory()}
+              onRenameHostCategory={(c) => void handleRenameCategory(c)}
+              onDeleteHostCategory={(c) => void handleDeleteCategory(c)}
+              filesAvailable={false}
+              canSaveCurrent={false}
+              saveDisabledReason="请先打开主机夹或并发会话"
+              onSaveCurrent={() => undefined}
+              onOpenWorkspace={(row, payload) => {
+                void handleOpenWorkspace(row, payload);
+              }}
+              refreshToken={workspaceRefreshToken}
+              canInjectCommand={false}
+              injectCommandDisabledReason="请先打开终端会话后再填入命令"
+            />
             <div className="hosts-panel-body">
               <HostListPage
                 hosts={savedHosts}
@@ -1751,22 +1749,10 @@ function App() {
                 selectedFilter={selectedFilter}
                 status="idle"
                 errorMessage={listError}
-                onSelectFilter={setSelectedFilter}
-                onAddCategory={handleAddCategory}
-                onRenameCategory={handleRenameCategory}
-                onDeleteCategory={handleDeleteCategory}
-                onAdd={openAdd}
                 onLogin={handleLogin}
                 onEdit={openEdit}
                 onDelete={handleDelete}
                 onConcurrentConnect={handleConcurrentConnect}
-                sidebarOpen={Boolean(remoteFilesOpenMap[HOSTS_TAB_ID])}
-                onToggleSidebar={() =>
-                  setRemoteFilesOpenMap((prev) => ({
-                    ...prev,
-                    [HOSTS_TAB_ID]: !Boolean(prev[HOSTS_TAB_ID]),
-                  }))
-                }
               />
             </div>
           </div>

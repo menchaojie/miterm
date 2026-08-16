@@ -14,7 +14,7 @@ export type ConnectionStatus =
 /** ssh-closed 原因：user=主动关闭；remote=对端退出；error=异常断线 */
 export type SshCloseReason = "user" | "remote" | "error";
 
-/** 固定的主机列表 Tab，不可关闭 */
+/** 固定的主页 Tab，不可关闭 */
 export const HOSTS_TAB_ID = "hosts";
 
 export type HostConnType = "ssh" | "local";

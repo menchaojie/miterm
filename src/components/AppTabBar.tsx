@@ -22,12 +22,12 @@ interface AppTabBarProps {
   onOpenSettings: () => void;
 }
 
-function IconHosts() {
+function IconHome() {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
       <path
         fill="currentColor"
-        d="M4 1h16c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V3c0-1.1.9-2 2-2zm0 8h16c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2zm0 8h16c1.1 0 2 .9 2 2v2H2v-2c0-1.1.9-2 2-2zM5 4v2h2V4H5zm0 8v2h2v-2H5zm0 8v2h2v-2H5z"
+        d="M12 3.2 3.5 10.2c-.3.25-.15.7.25.7H6v8.3c0 .4.3.7.7.7h3.6c.4 0 .7-.3.7-.7V14h2v4.5c0 .4.3.7.7.7h3.6c.4 0 .7-.3.7-.7V10.9h2.25c.4 0 .55-.45.25-.7L12 3.2z"
       />
     </svg>
   );
@@ -168,12 +168,13 @@ export function AppTabBar({
           >
             <button
               type="button"
-              className="app-tab-label app-tab-icon-btn"
-              title="主机列表"
-              aria-label="主机列表"
+              className="app-tab-label app-tab-home-btn"
+              title="主页"
+              aria-label="主页"
               onClick={() => onSelectTab(HOSTS_TAB_ID)}
             >
-              <IconHosts />
+              <IconHome />
+              <span className="app-tab-home-text">主页</span>
             </button>
           </div>
 

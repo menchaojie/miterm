@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RemoteFilePanel } from "./RemoteFilePanel";
-import { SavedCommandsPanel } from "./SavedCommandsPanel";
-import type { Category } from "../types";
+import type { Category, CategoryFilter, SavedHost } from "../types";
 import {
   buildCategoryGroups,
   isGroupCollapsed,
@@ -26,8 +24,17 @@ import {
   type SavedWorkspaceRow,
   type WorkspacePayload,
 } from "../workspace";
+import {
+  IconFolder,
+  IconRename,
+  IconTrash,
+  IconTreeChevron,
+} from "./CatTreeIcons";
+import { HostsNavPanel } from "./HostsNavPanel";
+import { RemoteFilePanel } from "./RemoteFilePanel";
+import { SavedCommandsPanel } from "./SavedCommandsPanel";
 
-export type SidebarPane = "workspaces" | "files" | "commands";
+export type SidebarPane = "hosts" | "workspaces" | "files" | "commands";
 
 const WIDTH_KEY = "miterm.sidebarWidth";
 const LEGACY_WIDTH_KEY = "miterm.remoteFilePanelWidth";
@@ -57,10 +64,20 @@ function saveSidebarWidth(w: number) {
   }
 }
 
-function loadSidebarPane(defaultPane: SidebarPane): SidebarPane {
+function loadSidebarPane(
+  allowed: SidebarPane[],
+  defaultPane: SidebarPane,
+): SidebarPane {
   try {
     const v = localStorage.getItem(PANE_KEY);
-    if (v === "files" || v === "workspaces" || v === "commands") return v;
+    if (
+      v === "hosts" ||
+      v === "files" ||
+      v === "workspaces" ||
+      v === "commands"
+    ) {
+      if (allowed.includes(v)) return v;
+    }
   } catch {
     /* ignore */
   }
@@ -75,22 +92,20 @@ function saveSidebarPane(pane: SidebarPane) {
   }
 }
 
-function IconChevron({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg
-      className={`cat-tree-chevron${collapsed ? " is-collapsed" : ""}`}
-      viewBox="0 0 24 24"
-      width="12"
-      height="12"
-      aria-hidden="true"
-    >
-      <path fill="currentColor" d="M9 6l6 6-6 6" />
-    </svg>
-  );
-}
-
 export interface WorkspaceSidebarProps {
   onClose: () => void;
+  /** 主页侧栏不可关闭时为 false */
+  closable?: boolean;
+  /** 是否允许「主机」导航 Tab（主页） */
+  hostsAvailable?: boolean;
+  hosts?: SavedHost[];
+  hostCategories?: Category[];
+  hostFilter?: CategoryFilter;
+  onHostFilter?: (filter: CategoryFilter) => void;
+  onAddHost?: () => void;
+  onAddHostCategory?: () => void;
+  onRenameHostCategory?: (category: Category) => void;
+  onDeleteHostCategory?: (category: Category) => void;
   /** 是否允许远程文件 Tab */
   filesAvailable: boolean;
   filesSessionId?: string | null;
@@ -113,6 +128,16 @@ export interface WorkspaceSidebarProps {
 
 export function WorkspaceSidebar({
   onClose,
+  closable = true,
+  hostsAvailable = false,
+  hosts = [],
+  hostCategories = [],
+  hostFilter = "all",
+  onHostFilter,
+  onAddHost,
+  onAddHostCategory,
+  onRenameHostCategory,
+  onDeleteHostCategory,
   filesAvailable,
   filesSessionId = null,
   filesInitialPath = "/",
@@ -127,9 +152,23 @@ export function WorkspaceSidebar({
   injectCommandDisabledReason,
   onInjectCommand,
 }: WorkspaceSidebarProps) {
-  const defaultPane: SidebarPane = filesAvailable ? "files" : "workspaces";
+  const allowedPanes = useMemo((): SidebarPane[] => {
+    const list: SidebarPane[] = [];
+    if (hostsAvailable) list.push("hosts");
+    list.push("workspaces");
+    if (filesAvailable) list.push("files");
+    list.push("commands");
+    return list;
+  }, [hostsAvailable, filesAvailable]);
+
+  const defaultPane: SidebarPane = hostsAvailable
+    ? "hosts"
+    : filesAvailable
+      ? "files"
+      : "workspaces";
+
   const [pane, setPane] = useState<SidebarPane>(() =>
-    loadSidebarPane(defaultPane),
+    loadSidebarPane(allowedPanes, defaultPane),
   );
   const [panelWidth, setPanelWidth] = useState(loadSidebarWidth);
   const [rows, setRows] = useState<SavedWorkspaceRow[]>([]);
@@ -142,8 +181,9 @@ export function WorkspaceSidebar({
   const [error, setError] = useState("");
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
-  const effectivePane: SidebarPane =
-    pane === "files" && !filesAvailable ? "workspaces" : pane;
+  const effectivePane: SidebarPane = allowedPanes.includes(pane)
+    ? pane
+    : defaultPane;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -167,13 +207,14 @@ export function WorkspaceSidebar({
   }, [refresh, refreshToken]);
 
   useEffect(() => {
-    if (pane === "files" && !filesAvailable) {
-      setPane("workspaces");
+    if (!allowedPanes.includes(pane)) {
+      setPane(defaultPane);
+      saveSidebarPane(defaultPane);
     }
-  }, [filesAvailable, pane]);
+  }, [allowedPanes, pane, defaultPane]);
 
   const selectPane = (next: SidebarPane) => {
-    if (next === "files" && !filesAvailable) return;
+    if (!allowedPanes.includes(next)) return;
     setPane(next);
     saveSidebarPane(next);
   };
@@ -296,6 +337,19 @@ export function WorkspaceSidebar({
     >
       <div className="workspace-sidebar-header">
         <div className="workspace-sidebar-tabs" role="tablist">
+          {hostsAvailable ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={effectivePane === "hosts"}
+              className={`workspace-sidebar-tab${
+                effectivePane === "hosts" ? " active" : ""
+              }`}
+              onClick={() => selectPane("hosts")}
+            >
+              主机
+            </button>
+          ) : null}
           <button
             type="button"
             role="tab"
@@ -307,23 +361,20 @@ export function WorkspaceSidebar({
           >
             工作区
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={effectivePane === "files"}
-            className={`workspace-sidebar-tab${
-              effectivePane === "files" ? " active" : ""
-            }`}
-            disabled={!filesAvailable}
-            title={
-              filesAvailable
-                ? "远程文件"
-                : "需在已连接的 SSH 会话中打开远程文件"
-            }
-            onClick={() => selectPane("files")}
-          >
-            远程文件
-          </button>
+          {filesAvailable ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={effectivePane === "files"}
+              className={`workspace-sidebar-tab${
+                effectivePane === "files" ? " active" : ""
+              }`}
+              title="远程文件"
+              onClick={() => selectPane("files")}
+            >
+              远程文件
+            </button>
+          ) : null}
           <button
             type="button"
             role="tab"
@@ -337,18 +388,31 @@ export function WorkspaceSidebar({
             命令
           </button>
         </div>
-        <button
-          type="button"
-          className="remote-file-close"
-          title="关闭侧栏"
-          aria-label="关闭侧栏"
-          onClick={onClose}
-        >
-          ×
-        </button>
+        {closable ? (
+          <button
+            type="button"
+            className="remote-file-close"
+            title="关闭侧栏"
+            aria-label="关闭侧栏"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        ) : null}
       </div>
 
-      {effectivePane === "workspaces" ? (
+      {effectivePane === "hosts" && hostsAvailable ? (
+        <HostsNavPanel
+          hosts={hosts}
+          categories={hostCategories}
+          selectedFilter={hostFilter}
+          onSelectFilter={(f) => onHostFilter?.(f)}
+          onAddCategory={() => onAddHostCategory?.()}
+          onRenameCategory={(c) => onRenameHostCategory?.(c)}
+          onDeleteCategory={(c) => onDeleteHostCategory?.(c)}
+          onAddHost={() => onAddHost?.()}
+        />
+      ) : effectivePane === "workspaces" ? (
         <div className="workspace-list-pane">
           <div className="workspace-list-toolbar">
             <button
@@ -410,9 +474,15 @@ export function WorkspaceSidebar({
             <ul className="cat-tree-list">
               {groups.map((group) => {
                 const collapsedGroup = isGroupCollapsed(collapsed, group.key);
+                const isActive =
+                  (group.key === "uncategorized" && saveCategoryId == null) ||
+                  (typeof group.key === "number" &&
+                    saveCategoryId === group.key);
                 return (
                   <li key={String(group.key)} className="cat-tree-group">
-                    <div className="cat-tree-group-header">
+                    <div
+                      className={`cat-tree-group-header${isActive ? " is-active" : ""}`}
+                    >
                       <button
                         type="button"
                         className="cat-tree-group-toggle"
@@ -420,7 +490,7 @@ export function WorkspaceSidebar({
                         title={collapsedGroup ? "展开" : "折叠"}
                         onClick={() => toggleGroupCollapsed(group.key)}
                       >
-                        <IconChevron collapsed={collapsedGroup} />
+                        <IconTreeChevron collapsed={collapsedGroup} />
                       </button>
                       <button
                         type="button"
@@ -432,6 +502,7 @@ export function WorkspaceSidebar({
                           )
                         }
                       >
+                        <IconFolder open={!collapsedGroup} />
                         <span className="cat-tree-group-label">
                           {group.label}
                         </span>
@@ -443,19 +514,21 @@ export function WorkspaceSidebar({
                         <div className="cat-tree-group-actions">
                           <button
                             type="button"
-                            className="btn-secondary cat-tree-group-btn"
+                            className="cat-tree-group-btn"
                             title="重命名"
+                            aria-label={`重命名分类 ${group.label}`}
                             onClick={() => void renameCategory(group.category!)}
                           >
-                            重命名
+                            <IconRename />
                           </button>
                           <button
                             type="button"
-                            className="btn-secondary cat-tree-group-btn"
+                            className="cat-tree-group-btn is-danger"
                             title="删除分类"
+                            aria-label={`删除分类 ${group.label}`}
                             onClick={() => void removeCategory(group.category!)}
                           >
-                            删除
+                            <IconTrash />
                           </button>
                         </div>
                       ) : null}

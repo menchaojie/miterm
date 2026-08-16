@@ -114,18 +114,18 @@ export const SHORTCUT_ACTIONS: {
   {
     id: "previousTab",
     label: "上一个会话 Tab",
-    hint: "仅在会话 Tab 间循环（不含主机列表）",
+    hint: "仅在会话 Tab 间循环（不含主页）",
     tab: "shortcutsNav",
   },
   {
     id: "nextTab",
     label: "下一个会话 Tab",
-    hint: "仅在会话 Tab 间循环（不含主机列表）",
+    hint: "仅在会话 Tab 间循环（不含主页）",
     tab: "shortcutsNav",
   },
   {
     id: "hostsTab",
-    label: "主机列表",
+    label: "主页",
     hint: "默认对应第 1 个 Tab（Ctrl+1）",
     tab: "shortcutsNav",
   },
@@ -179,7 +179,7 @@ export const SHORTCUT_ACTIONS: {
   {
     id: "toggleRemoteFiles",
     label: "打开/关闭侧栏",
-    hint: "工作区 / 远程文件 / 命令；默认 Ctrl+Shift+E",
+    hint: "会话页：工作区 / 远程文件 / 命令；主页侧栏常开不关闭；默认 Ctrl+Shift+E",
     tab: "shortcutsFiles",
   },
   {

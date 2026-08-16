@@ -21,22 +21,14 @@ import {
   updateCommandRow,
   type SavedCommandRow,
 } from "../savedCommands";
+import {
+  IconFolder,
+  IconRename,
+  IconTrash,
+  IconTreeChevron,
+} from "./CatTreeIcons";
 
 const CMD_COLLAPSE_KEY = "miterm.commandCategoryCollapse.v1";
-
-function IconChevron({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg
-      className={`cat-tree-chevron${collapsed ? " is-collapsed" : ""}`}
-      viewBox="0 0 24 24"
-      width="12"
-      height="12"
-      aria-hidden="true"
-    >
-      <path fill="currentColor" d="M9 6l6 6-6 6" />
-    </svg>
-  );
-}
 
 export interface SavedCommandsPanelProps {
   canInject: boolean;
@@ -365,7 +357,7 @@ export function SavedCommandsPanel({
                     title={collapsedGroup ? "展开" : "折叠"}
                     onClick={() => toggleGroupCollapsed(group.key)}
                   >
-                    <IconChevron collapsed={collapsedGroup} />
+                    <IconTreeChevron collapsed={collapsedGroup} />
                   </button>
                   <button
                     type="button"
@@ -377,6 +369,7 @@ export function SavedCommandsPanel({
                       )
                     }
                   >
+                    <IconFolder open={!collapsedGroup} />
                     <span className="cat-tree-group-label">{group.label}</span>
                     <span className="cat-tree-group-count">
                       {group.items.length}
@@ -386,19 +379,21 @@ export function SavedCommandsPanel({
                     <div className="cat-tree-group-actions">
                       <button
                         type="button"
-                        className="btn-secondary cat-tree-group-btn"
+                        className="cat-tree-group-btn"
                         title="重命名"
+                        aria-label={`重命名分类 ${group.label}`}
                         onClick={() => void renameCategory(group.category!)}
                       >
-                        重命名
+                        <IconRename />
                       </button>
                       <button
                         type="button"
-                        className="btn-secondary cat-tree-group-btn"
+                        className="cat-tree-group-btn is-danger"
                         title="删除分类"
+                        aria-label={`删除分类 ${group.label}`}
                         onClick={() => void removeCategory(group.category!)}
                       >
-                        删除
+                        <IconTrash />
                       </button>
                     </div>
                   ) : null}
