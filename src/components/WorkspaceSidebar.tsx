@@ -288,6 +288,42 @@ export function WorkspaceSidebar({
   const [error, setError] = useState("");
   const [detailRow, setDetailRow] = useState<SavedWorkspaceRow | null>(null);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const detailClickTimer = useRef<number | null>(null);
+
+  const clearDetailClickTimer = useCallback(() => {
+    if (detailClickTimer.current != null) {
+      window.clearTimeout(detailClickTimer.current);
+      detailClickTimer.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearDetailClickTimer(), [clearDetailClickTimer]);
+
+  const scheduleOpenDetail = useCallback(
+    (row: SavedWorkspaceRow) => {
+      clearDetailClickTimer();
+      detailClickTimer.current = window.setTimeout(() => {
+        detailClickTimer.current = null;
+        setDetailRow(row);
+      }, 280);
+    },
+    [clearDetailClickTimer],
+  );
+
+  const openWorkspaceDirect = useCallback(
+    (row: SavedWorkspaceRow) => {
+      clearDetailClickTimer();
+      setDetailRow(null);
+      const payload = parseWorkspacePayload(row.payload);
+      if (!payload) {
+        setError(`工作区「${row.name}」内容无效，无法打开`);
+        return;
+      }
+      setError("");
+      onOpenWorkspace(row, payload);
+    },
+    [clearDetailClickTimer, onOpenWorkspace],
+  );
 
   const effectivePane: SidebarPane = allowedPanes.includes(pane)
     ? pane
@@ -653,8 +689,12 @@ export function WorkspaceSidebar({
                               <button
                                 type="button"
                                 className="sidebar-name-btn"
-                                title={row.name}
-                                onClick={() => setDetailRow(row)}
+                                title={`${row.name}（单击详情，双击打开）`}
+                                onClick={() => scheduleOpenDetail(row)}
+                                onDoubleClick={(e) => {
+                                  e.preventDefault();
+                                  openWorkspaceDirect(row);
+                                }}
                               >
                                 {row.name}
                               </button>

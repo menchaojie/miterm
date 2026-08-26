@@ -3,15 +3,15 @@ mod sftp_ops;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use socket2::{SockRef, TcpKeepalive};
-use ssh2::Session;
+use ssh2::{Channel, Session};
 use tauri::{AppHandle, Emitter};
 
 pub use sftp_ops::{
@@ -58,19 +58,26 @@ pub struct SshSessionManager {
     sessions: Arc<Mutex<HashMap<String, ActiveSession>>>,
 }
 
-struct SharedSsh {
-    session: Session,
-    channel: ssh2::Channel,
+/// 单会话内所有 libssh2 调用只在 I/O 线程串行执行，避免非阻塞 EAGAIN 交叉调用弄坏会话。
+enum IoCmd {
+    Write {
+        data: Vec<u8>,
+        reply: Sender<Result<(), String>>,
+    },
+    Resize {
+        cols: u32,
+        rows: u32,
+        reply: Sender<Result<(), String>>,
+    },
+    Stop,
 }
 
 struct ActiveSession {
-    shared: Arc<Mutex<SharedSsh>>,
     auth: SessionAuth,
     /// 独立 SFTP 连接（与 PTY 分离，避免堵终端）
     sftp: Arc<Mutex<Option<sftp_ops::SftpSideSession>>>,
-    stop: Arc<AtomicBool>,
-    reader: JoinHandle<()>,
-    keepalive: JoinHandle<()>,
+    cmd_tx: Sender<IoCmd>,
+    io_thread: JoinHandle<()>,
 }
 
 fn is_temporarily_unavailable(err: &std::io::Error) -> bool {
@@ -100,53 +107,172 @@ pub(crate) fn apply_tcp_keepalive(tcp: &TcpStream) -> Result<(), String> {
     Ok(())
 }
 
-fn write_shared(shared: &Arc<Mutex<SharedSsh>>, data: &[u8]) -> Result<(), String> {
+fn write_channel(channel: &mut Channel, data: &[u8]) -> Result<(), String> {
     let mut written = 0;
     while written < data.len() {
-        let result = {
-            let mut guard = shared.lock();
-            guard.channel.write(&data[written..])
-        };
-        match result {
+        match channel.write(&data[written..]) {
             Ok(0) => return Err("write returned 0".into()),
             Ok(n) => written += n,
             Err(e) if is_temporarily_unavailable(&e) => {
-                thread::sleep(Duration::from_millis(5));
+                // set_timeout 下可能短暂 TimedOut；同线程重试即可
+                thread::sleep(Duration::from_millis(1));
             }
             Err(e) => return Err(format!("write failed: {e}")),
         }
     }
 
     loop {
-        let result = {
-            let mut guard = shared.lock();
-            guard.channel.flush()
-        };
-        match result {
-            Ok(()) => break,
+        match channel.flush() {
+            Ok(()) => return Ok(()),
             Err(e) if is_temporarily_unavailable(&e) => {
-                thread::sleep(Duration::from_millis(5));
+                thread::sleep(Duration::from_millis(1));
             }
             Err(e) => return Err(format!("flush failed: {e}")),
         }
     }
-    Ok(())
+}
+
+fn resize_channel(channel: &mut Channel, cols: u32, rows: u32) -> Result<(), String> {
+    loop {
+        match channel.request_pty_size(cols, rows, None, None) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_ssh_temporarily_unavailable(&e) => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(e) => return Err(format!("resize failed: {e}")),
+        }
+    }
+}
+
+fn drain_cmds(
+    cmd_rx: &Receiver<IoCmd>,
+    session: &Session,
+    channel: &mut Channel,
+) -> bool {
+    loop {
+        match cmd_rx.try_recv() {
+            Ok(IoCmd::Write { data, reply }) => {
+                let _ = reply.send(write_channel(channel, &data));
+            }
+            Ok(IoCmd::Resize { cols, rows, reply }) => {
+                let _ = reply.send(resize_channel(channel, cols, rows));
+            }
+            Ok(IoCmd::Stop) => {
+                while let Ok(cmd) = cmd_rx.try_recv() {
+                    match cmd {
+                        IoCmd::Write { reply, .. } | IoCmd::Resize { reply, .. } => {
+                            let _ = reply.send(Err("disconnected".into()));
+                        }
+                        IoCmd::Stop => {}
+                    }
+                }
+                let _ = channel.close();
+                let _ = session.disconnect(None, "", None);
+                return true;
+            }
+            Err(mpsc::TryRecvError::Empty) => return false,
+            Err(mpsc::TryRecvError::Disconnected) => return true,
+        }
+    }
+}
+
+fn run_session_io(
+    mut session: Session,
+    mut channel: Channel,
+    cmd_rx: Receiver<IoCmd>,
+    app: AppHandle,
+    session_id: String,
+    sessions: Arc<Mutex<HashMap<String, ActiveSession>>>,
+) {
+    // 短超时阻塞：读不会永久占死，便于穿插处理写/resize/keepalive；全程同线程串行。
+    session.set_blocking(true);
+    session.set_timeout(50);
+
+    let mut buf = [0u8; 8192];
+    let mut close_reason: Option<&'static str> = None;
+    let mut last_ka = Instant::now();
+
+    loop {
+        if drain_cmds(&cmd_rx, &session, &mut channel) {
+            close_reason = None;
+            break;
+        }
+
+        if last_ka.elapsed() >= Duration::from_secs(5) {
+            match session.keepalive_send() {
+                Ok(_) => last_ka = Instant::now(),
+                Err(e) => {
+                    eprintln!("[ssh] keepalive failed ({session_id}): {e}");
+                    close_reason = Some("error");
+                    break;
+                }
+            }
+        }
+
+        match channel.read(&mut buf) {
+            Ok(0) => {
+                close_reason = Some("remote");
+                break;
+            }
+            Ok(n) => {
+                let payload = SshOutputPayload {
+                    session_id: session_id.clone(),
+                    data: buf[..n].to_vec(),
+                };
+                if app.emit("ssh-output", payload).is_err() {
+                    eprintln!("[ssh] emit ssh-output failed ({session_id})");
+                    close_reason = Some("error");
+                    break;
+                }
+            }
+            Err(e) if is_temporarily_unavailable(&e) => {
+                // 正常：无数据 / 超时，继续处理命令
+            }
+            Err(e) => {
+                eprintln!("[ssh] channel read error ({session_id}): {e}");
+                close_reason = Some("error");
+                break;
+            }
+        }
+    }
+
+    if let Some(reason) = close_reason {
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                IoCmd::Write { reply, .. } | IoCmd::Resize { reply, .. } => {
+                    let _ = reply.send(Err("disconnected".into()));
+                }
+                IoCmd::Stop => {}
+            }
+        }
+        let removed = sessions.lock().remove(&session_id);
+        if let Some(active) = removed {
+            {
+                let mut slot = active.sftp.lock();
+                *slot = None;
+            }
+            // 当前就是 I/O 线程，不能 join 自己
+            std::mem::forget(active.io_thread);
+            drop(active.cmd_tx);
+        }
+        let _ = channel.close();
+        let _ = app.emit(
+            "ssh-closed",
+            SshClosedPayload {
+                session_id,
+                reason,
+            },
+        );
+    }
 }
 
 fn teardown_session(active: ActiveSession) {
-    active.stop.store(true, Ordering::SeqCst);
     {
         let mut slot = active.sftp.lock();
         *slot = None;
     }
-
-    if let Some(mut guard) = active.shared.try_lock() {
-        let _ = guard.channel.close();
-        let _ = guard.session.disconnect(None, "", None);
-    }
-
-    let _ = active.reader.join();
-    let _ = active.keepalive.join();
+    let _ = active.cmd_tx.send(IoCmd::Stop);
+    let _ = active.io_thread.join();
 }
 
 impl SshSessionManager {
@@ -223,7 +349,8 @@ impl SshSessionManager {
             return Err("authentication failed".into());
         }
 
-        sess.set_keepalive(true, 15);
+        // want_reply=false：降低对端/中间设备对 keepalive 应答不兼容时的误杀
+        sess.set_keepalive(false, 15);
 
         let mut channel = sess
             .channel_session()
@@ -237,119 +364,23 @@ impl SshSessionManager {
         );
         channel.shell().map_err(|e| format!("shell: {e}"))?;
 
-        sess.set_blocking(false);
-
-        let shared = Arc::new(Mutex::new(SharedSsh {
-            session: sess,
-            channel,
-        }));
         let sftp = Arc::new(Mutex::new(None));
-        let stop = Arc::new(AtomicBool::new(false));
         let sessions_map = Arc::clone(&self.sessions);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<IoCmd>();
 
-        let stop_reader = Arc::clone(&stop);
-        let shared_reader = Arc::clone(&shared);
-        let app_reader = app.clone();
-        let session_id_reader = session_id.clone();
-        let sessions_reader = Arc::clone(&sessions_map);
-
-        let reader = thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            let mut close_reason: Option<&'static str> = None;
-            loop {
-                if stop_reader.load(Ordering::SeqCst) {
-                    break;
-                }
-
-                let read_result = {
-                    let mut guard = shared_reader.lock();
-                    guard.channel.read(&mut buf)
-                };
-
-                match read_result {
-                    Ok(0) => {
-                        close_reason = Some("remote");
-                        break;
-                    }
-                    Ok(n) => {
-                        if stop_reader.load(Ordering::SeqCst) {
-                            break;
-                        }
-                        let payload = SshOutputPayload {
-                            session_id: session_id_reader.clone(),
-                            data: buf[..n].to_vec(),
-                        };
-                        if app_reader.emit("ssh-output", payload).is_err() {
-                            close_reason = Some("error");
-                            break;
-                        }
-                    }
-                    Err(e) if is_temporarily_unavailable(&e) => {
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(_) => {
-                        close_reason = Some("error");
-                        break;
-                    }
-                }
-            }
-
-            if let Some(reason) = close_reason {
-                let removed = sessions_reader.lock().remove(&session_id_reader);
-                if let Some(active) = removed {
-                    active.stop.store(true, Ordering::SeqCst);
-                    {
-                        let mut slot = active.sftp.lock();
-                        *slot = None;
-                    }
-                    std::mem::forget(active.reader);
-                    let _ = active.keepalive.join();
-                    if let Some(mut guard) = active.shared.try_lock() {
-                        let _ = guard.channel.close();
-                    }
-                }
-                let _ = app_reader.emit(
-                    "ssh-closed",
-                    SshClosedPayload {
-                        session_id: session_id_reader,
-                        reason,
-                    },
-                );
-            }
-        });
-
-        let stop_ka = Arc::clone(&stop);
-        let shared_ka = Arc::clone(&shared);
-        let keepalive = thread::spawn(move || {
-            while !stop_ka.load(Ordering::SeqCst) {
-                for _ in 0..50 {
-                    if stop_ka.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    thread::sleep(Duration::from_millis(100));
-                }
-                if stop_ka.load(Ordering::SeqCst) {
-                    break;
-                }
-                let result = {
-                    let guard = shared_ka.lock();
-                    guard.session.keepalive_send()
-                };
-                if result.is_err() {
-                    break;
-                }
-            }
+        let app_io = app.clone();
+        let session_id_io = session_id.clone();
+        let io_thread = thread::spawn(move || {
+            run_session_io(sess, channel, cmd_rx, app_io, session_id_io, sessions_map);
         });
 
         self.sessions.lock().insert(
             session_id.clone(),
             ActiveSession {
-                shared,
                 auth,
                 sftp,
-                stop,
-                reader,
-                keepalive,
+                cmd_tx,
+                io_thread,
             },
         );
 
@@ -357,42 +388,44 @@ impl SshSessionManager {
     }
 
     pub fn write(&self, session_id: &str, data: Vec<u8>) -> Result<(), String> {
-        let shared = {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        {
             let guard = self.sessions.lock();
-            guard
+            let active = guard
                 .get(session_id)
-                .map(|active| Arc::clone(&active.shared))
-                .ok_or_else(|| "not connected".to_string())?
-        };
-
-        write_shared(&shared, &data)
+                .ok_or_else(|| "not connected".to_string())?;
+            active
+                .cmd_tx
+                .send(IoCmd::Write {
+                    data,
+                    reply: reply_tx,
+                })
+                .map_err(|_| "session io stopped".to_string())?;
+        }
+        reply_rx
+            .recv()
+            .map_err(|_| "session io stopped".to_string())?
     }
 
     pub fn resize(&self, session_id: &str, cols: u32, rows: u32) -> Result<(), String> {
-        let shared = {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        {
             let guard = self.sessions.lock();
-            guard
+            let active = guard
                 .get(session_id)
-                .map(|active| Arc::clone(&active.shared))
-                .ok_or_else(|| "not connected".to_string())?
-        };
-
-        loop {
-            let result = {
-                let mut guard = shared.lock();
-                guard.channel.request_pty_size(cols, rows, None, None)
-            };
-            match result {
-                Ok(()) => return Ok(()),
-                Err(e) => {
-                    if is_ssh_temporarily_unavailable(&e) {
-                        thread::sleep(Duration::from_millis(5));
-                    } else {
-                        return Err(format!("resize failed: {e}"));
-                    }
-                }
-            }
+                .ok_or_else(|| "not connected".to_string())?;
+            active
+                .cmd_tx
+                .send(IoCmd::Resize {
+                    cols,
+                    rows,
+                    reply: reply_tx,
+                })
+                .map_err(|_| "session io stopped".to_string())?;
         }
+        reply_rx
+            .recv()
+            .map_err(|_| "session io stopped".to_string())?
     }
 
     fn sftp_handles(
