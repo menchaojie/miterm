@@ -177,7 +177,7 @@ fn drain_cmds(
 }
 
 fn run_session_io(
-    mut session: Session,
+    session: Session,
     mut channel: Channel,
     cmd_rx: Receiver<IoCmd>,
     app: AppHandle,
@@ -189,52 +189,46 @@ fn run_session_io(
     session.set_timeout(50);
 
     let mut buf = [0u8; 8192];
-    let mut close_reason: Option<&'static str> = None;
     let mut last_ka = Instant::now();
 
-    loop {
-        if drain_cmds(&cmd_rx, &session, &mut channel) {
-            close_reason = None;
-            break;
-        }
+    let close_reason = 'io: {
+        loop {
+            if drain_cmds(&cmd_rx, &session, &mut channel) {
+                break 'io None;
+            }
 
-        if last_ka.elapsed() >= Duration::from_secs(5) {
-            match session.keepalive_send() {
-                Ok(_) => last_ka = Instant::now(),
+            if last_ka.elapsed() >= Duration::from_secs(5) {
+                match session.keepalive_send() {
+                    Ok(_) => last_ka = Instant::now(),
+                    Err(e) => {
+                        eprintln!("[ssh] keepalive failed ({session_id}): {e}");
+                        break 'io Some("error");
+                    }
+                }
+            }
+
+            match channel.read(&mut buf) {
+                Ok(0) => break 'io Some("remote"),
+                Ok(n) => {
+                    let payload = SshOutputPayload {
+                        session_id: session_id.clone(),
+                        data: buf[..n].to_vec(),
+                    };
+                    if app.emit("ssh-output", payload).is_err() {
+                        eprintln!("[ssh] emit ssh-output failed ({session_id})");
+                        break 'io Some("error");
+                    }
+                }
+                Err(e) if is_temporarily_unavailable(&e) => {
+                    // 正常：无数据 / 超时，继续处理命令
+                }
                 Err(e) => {
-                    eprintln!("[ssh] keepalive failed ({session_id}): {e}");
-                    close_reason = Some("error");
-                    break;
+                    eprintln!("[ssh] channel read error ({session_id}): {e}");
+                    break 'io Some("error");
                 }
             }
         }
-
-        match channel.read(&mut buf) {
-            Ok(0) => {
-                close_reason = Some("remote");
-                break;
-            }
-            Ok(n) => {
-                let payload = SshOutputPayload {
-                    session_id: session_id.clone(),
-                    data: buf[..n].to_vec(),
-                };
-                if app.emit("ssh-output", payload).is_err() {
-                    eprintln!("[ssh] emit ssh-output failed ({session_id})");
-                    close_reason = Some("error");
-                    break;
-                }
-            }
-            Err(e) if is_temporarily_unavailable(&e) => {
-                // 正常：无数据 / 超时，继续处理命令
-            }
-            Err(e) => {
-                eprintln!("[ssh] channel read error ({session_id}): {e}");
-                close_reason = Some("error");
-                break;
-            }
-        }
-    }
+    };
 
     if let Some(reason) = close_reason {
         while let Ok(cmd) = cmd_rx.try_recv() {
