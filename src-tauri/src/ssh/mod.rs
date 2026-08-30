@@ -80,19 +80,36 @@ struct ActiveSession {
     io_thread: JoinHandle<()>,
 }
 
-fn is_temporarily_unavailable(err: &std::io::Error) -> bool {
-    matches!(
+/// 读轮询超时（ms）：短超时以便穿插处理写/resize/keepalive。
+const READ_POLL_TIMEOUT_MS: u32 = 100;
+/// 写 / resize / keepalive 操作超时（ms）：避免 50–100ms 毛刺被当成致命断线。
+const OP_TIMEOUT_MS: u32 = 30_000;
+
+fn is_io_soft_error(err: &std::io::Error) -> bool {
+    if matches!(
         err.kind(),
         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-    )
+    ) {
+        return true;
+    }
+    // ssh2 将 SOCKET_TIMEOUT(-30) 映射为 Other，需按文案识别
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("timed out") || msg.contains("timeout") || msg.contains("would block")
 }
 
-fn is_ssh_temporarily_unavailable(err: &ssh2::Error) -> bool {
+fn is_ssh_soft_error(err: &ssh2::Error) -> bool {
     use ssh2::ErrorCode;
-    matches!(
-        err.code(),
-        ErrorCode::Session(code) if code == -37 || code == -39
-    )
+    // -9 TIMEOUT, -30 SOCKET_TIMEOUT, -37 EAGAIN；-39 兼容旧判断
+    match err.code() {
+        ErrorCode::Session(-9 | -30 | -37 | -39) => true,
+        _ => {
+            let msg = err.message().to_ascii_lowercase();
+            msg.contains("timed out")
+                || msg.contains("timeout")
+                || msg.contains("would block")
+                || msg.contains("eagain")
+        }
+    }
 }
 
 pub(crate) fn apply_tcp_keepalive(tcp: &TcpStream) -> Result<(), String> {
@@ -113,8 +130,7 @@ fn write_channel(channel: &mut Channel, data: &[u8]) -> Result<(), String> {
         match channel.write(&data[written..]) {
             Ok(0) => return Err("write returned 0".into()),
             Ok(n) => written += n,
-            Err(e) if is_temporarily_unavailable(&e) => {
-                // set_timeout 下可能短暂 TimedOut；同线程重试即可
+            Err(e) if is_io_soft_error(&e) => {
                 thread::sleep(Duration::from_millis(1));
             }
             Err(e) => return Err(format!("write failed: {e}")),
@@ -124,7 +140,7 @@ fn write_channel(channel: &mut Channel, data: &[u8]) -> Result<(), String> {
     loop {
         match channel.flush() {
             Ok(()) => return Ok(()),
-            Err(e) if is_temporarily_unavailable(&e) => {
+            Err(e) if is_io_soft_error(&e) => {
                 thread::sleep(Duration::from_millis(1));
             }
             Err(e) => return Err(format!("flush failed: {e}")),
@@ -136,12 +152,19 @@ fn resize_channel(channel: &mut Channel, cols: u32, rows: u32) -> Result<(), Str
     loop {
         match channel.request_pty_size(cols, rows, None, None) {
             Ok(()) => return Ok(()),
-            Err(e) if is_ssh_temporarily_unavailable(&e) => {
+            Err(e) if is_ssh_soft_error(&e) => {
                 thread::sleep(Duration::from_millis(1));
             }
             Err(e) => return Err(format!("resize failed: {e}")),
         }
     }
+}
+
+fn with_op_timeout<T>(session: &Session, f: impl FnOnce() -> T) -> T {
+    session.set_timeout(OP_TIMEOUT_MS);
+    let out = f();
+    session.set_timeout(READ_POLL_TIMEOUT_MS);
+    out
 }
 
 fn drain_cmds(
@@ -152,10 +175,13 @@ fn drain_cmds(
     loop {
         match cmd_rx.try_recv() {
             Ok(IoCmd::Write { data, reply }) => {
-                let _ = reply.send(write_channel(channel, &data));
+                let result = with_op_timeout(session, || write_channel(channel, &data));
+                let _ = reply.send(result);
             }
             Ok(IoCmd::Resize { cols, rows, reply }) => {
-                let _ = reply.send(resize_channel(channel, cols, rows));
+                let result =
+                    with_op_timeout(session, || resize_channel(channel, cols, rows));
+                let _ = reply.send(result);
             }
             Ok(IoCmd::Stop) => {
                 while let Ok(cmd) = cmd_rx.try_recv() {
@@ -184,12 +210,13 @@ fn run_session_io(
     session_id: String,
     sessions: Arc<Mutex<HashMap<String, ActiveSession>>>,
 ) {
-    // 短超时阻塞：读不会永久占死，便于穿插处理写/resize/keepalive；全程同线程串行。
+    // 读用短超时轮询；写/keepalive 临时加长超时。全程同线程串行。
     session.set_blocking(true);
-    session.set_timeout(50);
+    session.set_timeout(READ_POLL_TIMEOUT_MS);
 
     let mut buf = [0u8; 8192];
     let mut last_ka = Instant::now();
+    let mut ka_soft_fails: u32 = 0;
 
     let close_reason = 'io: {
         loop {
@@ -198,17 +225,42 @@ fn run_session_io(
             }
 
             if last_ka.elapsed() >= Duration::from_secs(5) {
-                match session.keepalive_send() {
-                    Ok(_) => last_ka = Instant::now(),
+                let ka_result = with_op_timeout(&session, || session.keepalive_send());
+                match ka_result {
+                    Ok(_) => {
+                        ka_soft_fails = 0;
+                        last_ka = Instant::now();
+                    }
+                    Err(e) if is_ssh_soft_error(&e) => {
+                        ka_soft_fails = ka_soft_fails.saturating_add(1);
+                        eprintln!(
+                            "[ssh] keepalive soft fail ({session_id}, n={ka_soft_fails}): {e}"
+                        );
+                        // 不拆会话；推迟下一轮，避免 tight loop
+                        last_ka = Instant::now();
+                        if ka_soft_fails >= 12 {
+                            // 连续约 1 分钟都软失败，再视为异常
+                            eprintln!(
+                                "[ssh] keepalive soft fail limit ({session_id}): giving up"
+                            );
+                            break 'io Some("error");
+                        }
+                    }
                     Err(e) => {
-                        eprintln!("[ssh] keepalive failed ({session_id}): {e}");
+                        eprintln!("[ssh] keepalive fatal ({session_id}): {e}");
                         break 'io Some("error");
                     }
                 }
             }
 
             match channel.read(&mut buf) {
-                Ok(0) => break 'io Some("remote"),
+                Ok(0) => {
+                    // libssh2：0 只表示本轮无 payload，不等于 EOF
+                    if channel.eof() {
+                        eprintln!("[ssh] channel eof ({session_id})");
+                        break 'io Some("remote");
+                    }
+                }
                 Ok(n) => {
                     let payload = SshOutputPayload {
                         session_id: session_id.clone(),
@@ -219,11 +271,11 @@ fn run_session_io(
                         break 'io Some("error");
                     }
                 }
-                Err(e) if is_temporarily_unavailable(&e) => {
-                    // 正常：无数据 / 超时，继续处理命令
+                Err(e) if is_io_soft_error(&e) => {
+                    // 正常：无数据 / 读轮询超时
                 }
                 Err(e) => {
-                    eprintln!("[ssh] channel read error ({session_id}): {e}");
+                    eprintln!("[ssh] channel read error ({session_id}): {e:?} / {e}");
                     break 'io Some("error");
                 }
             }
