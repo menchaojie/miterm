@@ -41,7 +41,19 @@ interface TerminalWorkspaceProps {
   /** 工作区侧栏 */
   canSaveWorkspace?: boolean;
   saveWorkspaceDisabledReason?: string;
-  onSaveWorkspace?: (categoryId: number | null) => void;
+  onSaveWorkspace?: (
+    name: string,
+    categoryId: number | null,
+  ) => void | Promise<void>;
+  canRestoreWorkspace?: boolean;
+  restoreWorkspaceDisabledReason?: string;
+  onRestoreWorkspace?: () => void | Promise<void>;
+  canRestoreWorkspaceRow?: (
+    row: import("../workspace").SavedWorkspaceRow,
+  ) => boolean;
+  onRestoreWorkspaceCwds?: (
+    row: import("../workspace").SavedWorkspaceRow,
+  ) => void | Promise<void>;
   onOpenWorkspace?: (
     row: import("../workspace").SavedWorkspaceRow,
     payload: import("../workspace").WorkspacePayload,
@@ -339,6 +351,11 @@ export function TerminalWorkspace({
   canSaveWorkspace = false,
   saveWorkspaceDisabledReason,
   onSaveWorkspace,
+  canRestoreWorkspace = false,
+  restoreWorkspaceDisabledReason,
+  onRestoreWorkspace,
+  canRestoreWorkspaceRow,
+  onRestoreWorkspaceCwds,
   onOpenWorkspace,
   workspaceRefreshToken = 0,
   onSelectSubTab,
@@ -747,7 +764,17 @@ export function TerminalWorkspace({
             filesConnected={activeTab?.status === "connected"}
             canSaveCurrent={canSaveWorkspace}
             saveDisabledReason={saveWorkspaceDisabledReason}
-            onSaveCurrent={(categoryId) => onSaveWorkspace?.(categoryId)}
+            onSaveCurrent={async (name, categoryId) => {
+              if (!onSaveWorkspace) {
+                throw new Error("当前无法保存工作区");
+              }
+              await onSaveWorkspace(name, categoryId);
+            }}
+            canRestoreCurrent={canRestoreWorkspace}
+            restoreDisabledReason={restoreWorkspaceDisabledReason}
+            onRestoreCurrent={onRestoreWorkspace}
+            canRestoreWorkspaceRow={canRestoreWorkspaceRow}
+            onRestoreWorkspaceCwds={onRestoreWorkspaceCwds}
             onOpenWorkspace={(row, payload) =>
               onOpenWorkspace?.(row as SavedWorkspaceRow, payload as WorkspacePayload)
             }

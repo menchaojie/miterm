@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isRestorableCwd } from "./cwd";
 import type { FolderLayout } from "./splitLayout";
-import { countLayoutLeaves } from "./splitLayout";
+import { collectLayoutSessionIds, countLayoutLeaves } from "./splitLayout";
 import type {
   ConcurrentGroup,
   HostFolder,
@@ -250,4 +251,82 @@ export function resolveHostsForPayload(
 
 export function folderLivePaneCount(folder: HostFolder): number {
   return folder.subTabs.reduce((n, st) => n + countLayoutLeaves(st.layout), 0);
+}
+
+function collectPersistedLeafMeta(
+  layout: PersistedLayout,
+): { savedHostId: number; cwd?: string | null }[] {
+  if (layout.type === "leaf") {
+    return [{ savedHostId: layout.savedHostId, cwd: layout.cwd }];
+  }
+  return [
+    ...collectPersistedLeafMeta(layout.first),
+    ...collectPersistedLeafMeta(layout.second),
+  ];
+}
+
+/** 软恢复：对已连接 SSH 窗格按快照 cwd 发 cd（不重连） */
+export type CwdRestoreTarget = {
+  sessionId: string;
+  cwd: string;
+};
+
+export function planFolderCwdRestore(
+  folder: HostFolder,
+  payload: FolderWorkspacePayload,
+  sessions: SessionTab[],
+): CwdRestoreTarget[] {
+  const byId = new Map(sessions.map((s) => [s.id, s] as const));
+  const targets: CwdRestoreTarget[] = [];
+  const n = Math.min(folder.subTabs.length, payload.subTabs.length);
+  for (let i = 0; i < n; i++) {
+    const liveIds = collectLayoutSessionIds(folder.subTabs[i].layout);
+    const persisted = collectPersistedLeafMeta(payload.subTabs[i].layout);
+    const m = Math.min(liveIds.length, persisted.length);
+    for (let j = 0; j < m; j++) {
+      const cwd = persisted[j]?.cwd;
+      if (!isRestorableCwd(cwd)) continue;
+      const tab = byId.get(liveIds[j]);
+      if (!tab || tab.status !== "connected") continue;
+      if (tab.kind === "local") continue;
+      if (tab.cwd === cwd) continue;
+      targets.push({ sessionId: liveIds[j], cwd });
+    }
+  }
+  return targets;
+}
+
+export function planGroupCwdRestore(
+  group: ConcurrentGroup,
+  payload: GroupWorkspacePayload,
+  sessions: SessionTab[],
+): CwdRestoreTarget[] {
+  const byId = new Map(sessions.map((s) => [s.id, s] as const));
+  const targets: CwdRestoreTarget[] = [];
+  const n = Math.min(group.sessionIds.length, payload.members.length);
+  for (let i = 0; i < n; i++) {
+    const cwd = payload.members[i]?.cwd;
+    if (!isRestorableCwd(cwd)) continue;
+    const sessionId = group.sessionIds[i];
+    const tab = byId.get(sessionId);
+    if (!tab || tab.status !== "connected") continue;
+    if (tab.kind === "local") continue;
+    if (tab.cwd === cwd) continue;
+    targets.push({ sessionId, cwd });
+  }
+  return targets;
+}
+
+export function planWorkspaceCwdRestore(
+  payload: WorkspacePayload,
+  sessions: SessionTab[],
+  opts: { folder?: HostFolder | null; group?: ConcurrentGroup | null },
+): CwdRestoreTarget[] {
+  if (payload.kind === "folder" && opts.folder) {
+    return planFolderCwdRestore(opts.folder, payload, sessions);
+  }
+  if (payload.kind === "group" && opts.group) {
+    return planGroupCwdRestore(opts.group, payload, sessions);
+  }
+  return [];
 }

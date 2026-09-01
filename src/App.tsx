@@ -60,6 +60,8 @@ import {
 import { isRestorableCwd, shellSingleQuote, guessUnixHome } from "./cwd";
 import {
   hydrateLayout,
+  parseWorkspacePayload,
+  planWorkspaceCwdRestore,
   resolveHostsForPayload,
   saveWorkspaceRow,
   serializeFolderWorkspace,
@@ -382,15 +384,22 @@ function App() {
     [],
   );
 
-  const restoreCwdAfterReconnect = useCallback(
-    async (sessionId: string, cwd: string | null | undefined) => {
+  const applySessionCwd = useCallback(
+    async (
+      sessionId: string,
+      cwd: string | null | undefined,
+      opts?: { delayMs?: number; skipIfCancelled?: boolean },
+    ) => {
       if (!isRestorableCwd(cwd)) return;
-      if (cancelReconnectRef.current.has(sessionId)) return;
-      // 等 MOTD / hook 静默安装 / 首个提示符稍稳后再 cd
-      await new Promise((r) => setTimeout(r, 450));
-      if (cancelReconnectRef.current.has(sessionId)) return;
+      const delayMs = opts?.delayMs ?? 0;
+      const skipIfCancelled = opts?.skipIfCancelled ?? false;
+      if (delayMs > 0) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+      if (skipIfCancelled && cancelReconnectRef.current.has(sessionId)) return;
       const tab = sessionTabsRef.current.find((t) => t.id === sessionId);
       if (!tab || tab.status !== "connected") return;
+      if (tab.kind === "local") return;
 
       const data = Array.from(
         new TextEncoder().encode(`cd ${shellSingleQuote(cwd)}\n`),
@@ -405,6 +414,19 @@ function App() {
       }
     },
     [pushNotice, updateTab],
+  );
+
+  const restoreCwdAfterReconnect = useCallback(
+    async (sessionId: string, cwd: string | null | undefined) => {
+      if (!isRestorableCwd(cwd)) return;
+      if (cancelReconnectRef.current.has(sessionId)) return;
+      // 等 MOTD / hook 静默安装 / 首个提示符稍稳后再 cd
+      await applySessionCwd(sessionId, cwd, {
+        delayMs: 450,
+        skipIfCancelled: true,
+      });
+    },
+    [applySessionCwd],
   );
 
   const reconnectSession = useCallback(
@@ -1248,13 +1270,12 @@ function App() {
   }, []);
 
   const handleSaveCurrentWorkspace = useCallback(
-    async (categoryId: number | null = null) => {
-      const name = window.prompt("工作区名称");
-      if (name == null) return;
+    async (name: string, categoryId: number | null = null): Promise<void> => {
       const trimmed = name.trim();
       if (!trimmed) {
-        setListError("工作区名称不能为空");
-        return;
+        const msg = "工作区名称不能为空";
+        setListError(msg);
+        throw new Error(msg);
       }
 
       try {
@@ -1276,8 +1297,9 @@ function App() {
           );
           const payload = serializeGroupWorkspace(activeGroup, groupSessions);
           if (!payload) {
-            setListError("并发工作区至少需要 2 台有效主机");
-            return;
+            const msg = "并发工作区至少需要 2 台有效主机";
+            setListError(msg);
+            throw new Error(msg);
           }
           await saveWorkspaceRow({
             name: trimmed,
@@ -1286,20 +1308,23 @@ function App() {
             categoryId,
           });
         } else {
-          setListError("请先打开主机夹或并发会话再保存工作区");
-          return;
+          const msg = "请先打开主机夹或并发会话再保存工作区";
+          setListError(msg);
+          throw new Error(msg);
         }
         setListError("");
         setWorkspaceRefreshToken((n) => n + 1);
       } catch (e) {
-        setListError(String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        setListError(msg);
+        throw e instanceof Error ? e : new Error(msg);
       }
     },
     [activeFolder, activeGroup, sessionTabs],
   );
 
   const handleOpenWorkspace = useCallback(
-    async (_row: SavedWorkspaceRow, payload: WorkspacePayload) => {
+    async (row: SavedWorkspaceRow, payload: WorkspacePayload) => {
       const check = resolveHostsForPayload(payload, savedHostsRef.current);
       if (!check.ok) {
         setListError(
@@ -1311,6 +1336,7 @@ function App() {
       const hostsById = new Map(
         savedHostsRef.current.map((h) => [h.id, h] as const),
       );
+      const payloadJson = JSON.stringify(payload);
 
       try {
         if (payload.kind === "folder") {
@@ -1367,6 +1393,8 @@ function App() {
             activeSubTabId: activeSub.id,
             activeSessionId,
             sessionIds: allLeafIds,
+            sourceWorkspaceId: row.id,
+            sourceWorkspacePayloadJson: payloadJson,
           };
 
           setSessionTabs((prev) => [...prev, ...tabs]);
@@ -1415,6 +1443,8 @@ function App() {
           title: `并发 · ${prepared.length} 台`,
           sessionIds,
           focusedSessionId: sessionIds[focusedIndex] ?? null,
+          sourceWorkspaceId: row.id,
+          sourceWorkspacePayloadJson: payloadJson,
         };
 
         setSessionTabs((prev) => [...prev, ...prepared.map((p) => p.tab)]);
@@ -1443,6 +1473,96 @@ function App() {
       }
     },
     [restoreCwdAfterReconnect, updateTab],
+  );
+
+  const findOpenFromWorkspace = useCallback(
+    (workspaceId: number) => {
+      if (activeFolder?.sourceWorkspaceId === workspaceId) {
+        return { folder: activeFolder, group: null as ConcurrentGroup | null };
+      }
+      if (activeGroup?.sourceWorkspaceId === workspaceId) {
+        return { folder: null as HostFolder | null, group: activeGroup };
+      }
+      const folder =
+        folders.find((f) => f.sourceWorkspaceId === workspaceId) ?? null;
+      if (folder) return { folder, group: null as ConcurrentGroup | null };
+      const group =
+        groups.find((g) => g.sourceWorkspaceId === workspaceId) ?? null;
+      return { folder: null as HostFolder | null, group };
+    },
+    [activeFolder, activeGroup, folders, groups],
+  );
+
+  const handleRestoreWorkspaceCwds = useCallback(
+    async (row?: SavedWorkspaceRow) => {
+      let folder: HostFolder | null = null;
+      let group: ConcurrentGroup | null = null;
+      let payload: WorkspacePayload | null = null;
+
+      if (row) {
+        payload = parseWorkspacePayload(row.payload);
+        if (!payload) {
+          setListError("工作区数据无效，无法恢复目录");
+          throw new Error("工作区数据无效，无法恢复目录");
+        }
+        const found = findOpenFromWorkspace(row.id);
+        folder = found.folder;
+        group = found.group;
+        if (!folder && !group) {
+          const msg = "请先打开此工作区后再恢复目录";
+          setListError(msg);
+          throw new Error(msg);
+        }
+        // 切到对应 Tab，便于看到终端 notice
+        if (folder) setActiveTabId(folder.id);
+        else if (group) setActiveTabId(group.id);
+      } else if (activeFolder?.sourceWorkspacePayloadJson) {
+        folder = activeFolder;
+        payload = parseWorkspacePayload(activeFolder.sourceWorkspacePayloadJson);
+      } else if (activeGroup?.sourceWorkspacePayloadJson) {
+        group = activeGroup;
+        payload = parseWorkspacePayload(activeGroup.sourceWorkspacePayloadJson);
+      } else {
+        const msg = "当前会话不是从已保存工作区打开的，无法恢复目录";
+        setListError(msg);
+        throw new Error(msg);
+      }
+
+      if (!payload) {
+        const msg = "缺少工作区快照，无法恢复目录";
+        setListError(msg);
+        throw new Error(msg);
+      }
+
+      const targets = planWorkspaceCwdRestore(payload, sessionTabsRef.current, {
+        folder,
+        group,
+      });
+      if (targets.length === 0) {
+        const msg = "没有需要恢复的目录（可能已在快照路径，或无已连接的 SSH 窗格）";
+        setListError(msg);
+        throw new Error(msg);
+      }
+
+      setListError("");
+      await Promise.all(
+        targets.map((t) => applySessionCwd(t.sessionId, t.cwd, { delayMs: 0 })),
+      );
+    },
+    [
+      activeFolder,
+      activeGroup,
+      applySessionCwd,
+      findOpenFromWorkspace,
+    ],
+  );
+
+  const canRestoreWorkspaceRow = useCallback(
+    (row: SavedWorkspaceRow) => {
+      const found = findOpenFromWorkspace(row.id);
+      return Boolean(found.folder || found.group);
+    },
+    [findOpenFromWorkspace],
   );
 
   useEffect(() => {
@@ -1734,7 +1854,13 @@ function App() {
               filesAvailable={false}
               canSaveCurrent={false}
               saveDisabledReason="请先打开主机夹或并发会话"
-              onSaveCurrent={() => undefined}
+              onSaveCurrent={async () => {
+                throw new Error("请先打开主机夹或并发会话");
+              }}
+              canRestoreCurrent={false}
+              restoreDisabledReason="请先打开已保存的工作区"
+              canRestoreWorkspaceRow={canRestoreWorkspaceRow}
+              onRestoreWorkspaceCwds={(row) => handleRestoreWorkspaceCwds(row)}
               onOpenWorkspace={(row, payload) => {
                 void handleOpenWorkspace(row, payload);
               }}
@@ -1798,9 +1924,16 @@ function App() {
                   }
                   fontSize={settings.terminalFontSize}
                   canSaveWorkspace
-                  onSaveWorkspace={(categoryId) => {
-                    void handleSaveCurrentWorkspace(categoryId);
-                  }}
+                  onSaveWorkspace={(name, categoryId) =>
+                    handleSaveCurrentWorkspace(name, categoryId)
+                  }
+                  canRestoreWorkspace={group.sourceWorkspaceId != null}
+                  restoreWorkspaceDisabledReason="请先从已保存工作区打开"
+                  onRestoreWorkspace={() => handleRestoreWorkspaceCwds()}
+                  canRestoreWorkspaceRow={canRestoreWorkspaceRow}
+                  onRestoreWorkspaceCwds={(row) =>
+                    handleRestoreWorkspaceCwds(row)
+                  }
                   onOpenWorkspace={(row, payload) => {
                     void handleOpenWorkspace(row, payload);
                   }}
@@ -1872,9 +2005,16 @@ function App() {
                   }
                   fontSize={settings.terminalFontSize}
                   canSaveWorkspace
-                  onSaveWorkspace={(categoryId) => {
-                    void handleSaveCurrentWorkspace(categoryId);
-                  }}
+                  onSaveWorkspace={(name, categoryId) =>
+                    handleSaveCurrentWorkspace(name, categoryId)
+                  }
+                  canRestoreWorkspace={folder.sourceWorkspaceId != null}
+                  restoreWorkspaceDisabledReason="请先从已保存工作区打开"
+                  onRestoreWorkspace={() => handleRestoreWorkspaceCwds()}
+                  canRestoreWorkspaceRow={canRestoreWorkspaceRow}
+                  onRestoreWorkspaceCwds={(row) =>
+                    handleRestoreWorkspaceCwds(row)
+                  }
                   onOpenWorkspace={(row, payload) => {
                     void handleOpenWorkspace(row, payload);
                   }}

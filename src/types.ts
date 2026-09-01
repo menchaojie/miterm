@@ -98,6 +98,10 @@ export interface HostFolder {
    * @deprecated 仅兼容热更新前内存态；请用 activeSubTab.layout
    */
   layout?: FolderLayout;
+  /** 由哪条已保存工作区打开（用于「恢复目录」） */
+  sourceWorkspaceId?: number | null;
+  /** 打开时的工作区 payload JSON 快照 */
+  sourceWorkspacePayloadJson?: string | null;
 }
 
 /** 并发会话 Tab（一组多主机同屏格子） */
@@ -106,6 +110,10 @@ export interface ConcurrentGroup {
   title: string;
   sessionIds: string[];
   focusedSessionId: string | null;
+  /** 由哪条已保存工作区打开（用于「恢复目录」） */
+  sourceWorkspaceId?: number | null;
+  /** 打开时的工作区 payload JSON 快照 */
+  sourceWorkspacePayloadJson?: string | null;
 }
 
 export interface SshOutputEvent {

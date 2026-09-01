@@ -95,15 +95,19 @@ function saveSidebarPane(pane: SidebarPane) {
 function WorkspaceDetailModal({
   row,
   categories,
+  canRestore,
   onClose,
   onOpen,
+  onRestoreCwds,
   onChangeCategory,
   onDelete,
 }: {
   row: SavedWorkspaceRow;
   categories: Category[];
+  canRestore: boolean;
   onClose: () => void;
   onOpen: (row: SavedWorkspaceRow, payload: WorkspacePayload) => void;
+  onRestoreCwds: (row: SavedWorkspaceRow) => void | Promise<void>;
   onChangeCategory: (
     row: SavedWorkspaceRow,
     categoryId: number | null,
@@ -183,12 +187,141 @@ function WorkspaceDetailModal({
           <button
             type="button"
             className="btn-secondary"
+            disabled={!canRestore || !payload}
+            title={
+              canRestore
+                ? "将已打开的该工作区各窗格目录恢复为保存时的路径（不重连）"
+                : "请先打开此工作区"
+            }
+            onClick={() => {
+              void Promise.resolve(onRestoreCwds(row))
+                .then(() => onClose())
+                .catch(() => {
+                  /* 错误由 App listError / 终端 notice 展示 */
+                });
+            }}
+          >
+            恢复目录
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
             onClick={() => onDelete(row)}
           >
             删除
           </button>
           <button type="button" className="btn-secondary" onClick={onClose}>
             关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SaveWorkspaceModal({
+  categories,
+  initialCategoryId,
+  saving,
+  formError,
+  onClose,
+  onConfirm,
+}: {
+  categories: Category[];
+  initialCategoryId: number | null;
+  saving: boolean;
+  formError: string;
+  onClose: () => void;
+  onConfirm: (name: string, categoryId: number | null) => void;
+}) {
+  const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState<number | null>(initialCategoryId);
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !saving) onClose();
+      }}
+    >
+      <div
+        className="sidebar-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="workspace-save-title"
+      >
+        <header className="sidebar-detail-header">
+          <h3 id="workspace-save-title" className="sidebar-detail-title">
+            保存工作区
+          </h3>
+          <button
+            type="button"
+            className="remote-file-close"
+            title="关闭"
+            aria-label="关闭"
+            disabled={saving}
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </header>
+        <div className="sidebar-detail-body">
+          <label className="saved-command-field">
+            <span>名称</span>
+            <input
+              type="text"
+              value={name}
+              placeholder="例如：生产运维夹"
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !saving) {
+                  e.preventDefault();
+                  onConfirm(name, categoryId);
+                }
+              }}
+              autoFocus
+              disabled={saving}
+            />
+          </label>
+          <label className="saved-command-field">
+            <span>分类</span>
+            <select
+              value={categoryId == null ? "" : String(categoryId)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCategoryId(v === "" ? null : Number(v));
+              }}
+              disabled={saving}
+            >
+              <option value="">未分类</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={String(cat.id)}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {formError ? (
+            <div className="workspace-list-error">{formError}</div>
+          ) : null}
+        </div>
+        <div className="sidebar-detail-actions">
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={saving}
+            onClick={() => onConfirm(name, categoryId)}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={saving}
+            onClick={onClose}
+          >
+            取消
           </button>
         </div>
       </div>
@@ -219,8 +352,18 @@ export interface WorkspaceSidebarProps {
   /** 当前是否有可保存的会话工作区 */
   canSaveCurrent: boolean;
   saveDisabledReason?: string;
-  /** 保存当前工作区；categoryId 为归属分类 */
-  onSaveCurrent: (categoryId: number | null) => void;
+  /** 保存当前工作区；失败时抛错，弹窗保持打开并显示原因 */
+  onSaveCurrent: (
+    name: string,
+    categoryId: number | null,
+  ) => void | Promise<void>;
+  /** 当前 Tab 是否可从打开来源快照恢复各窗 cwd */
+  canRestoreCurrent?: boolean;
+  restoreDisabledReason?: string;
+  onRestoreCurrent?: () => void | Promise<void>;
+  /** 详情里「恢复目录」：该行工作区是否已有打开的会话 */
+  canRestoreWorkspaceRow?: (row: SavedWorkspaceRow) => boolean;
+  onRestoreWorkspaceCwds?: (row: SavedWorkspaceRow) => void | Promise<void>;
   onOpenWorkspace: (row: SavedWorkspaceRow, payload: WorkspacePayload) => void;
   /** 列表刷新令牌（保存后递增） */
   refreshToken?: number;
@@ -250,6 +393,11 @@ export function WorkspaceSidebar({
   canSaveCurrent,
   saveDisabledReason,
   onSaveCurrent,
+  canRestoreCurrent = false,
+  restoreDisabledReason,
+  onRestoreCurrent,
+  canRestoreWorkspaceRow,
+  onRestoreWorkspaceCwds,
   onOpenWorkspace,
   refreshToken = 0,
   canInjectCommand = false,
@@ -287,6 +435,10 @@ export function WorkspaceSidebar({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [detailRow, setDetailRow] = useState<SavedWorkspaceRow | null>(null);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveModalNonce, setSaveModalNonce] = useState(0);
+  const [saveModalError, setSaveModalError] = useState("");
+  const [saveModalSaving, setSaveModalSaving] = useState(false);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const detailClickTimer = useRef<number | null>(null);
 
@@ -570,9 +722,29 @@ export function WorkspaceSidebar({
                   ? "将当前主机夹或并发组合保存为工作区"
                   : saveDisabledReason || "当前无可保存的会话"
               }
-              onClick={() => onSaveCurrent(saveCategoryId)}
+              onClick={() => {
+                setSaveModalError("");
+                setSaveModalNonce((n) => n + 1);
+                setSaveModalOpen(true);
+              }}
             >
               保存当前
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={!canRestoreCurrent}
+              title={
+                canRestoreCurrent
+                  ? "将各窗格目录恢复为打开工作区时保存的路径（不重连）"
+                  : restoreDisabledReason ||
+                    "请先从已保存工作区打开，且目录有变化"
+              }
+              onClick={() => {
+                void onRestoreCurrent?.();
+              }}
+            >
+              恢复目录
             </button>
             <button
               type="button"
@@ -591,15 +763,15 @@ export function WorkspaceSidebar({
             </button>
           </div>
           <label className="workspace-category-field">
-            <span>保存到</span>
+            <span>默认分类</span>
             <select
               value={saveCategoryId == null ? "" : String(saveCategoryId)}
               onChange={(e) => {
                 const v = e.target.value;
                 setSaveCategoryId(v === "" ? null : Number(v));
               }}
-              aria-label="保存工作区时的分类"
-              title="「保存当前」使用的分类"
+              aria-label="保存工作区弹窗的默认分类"
+              title="「保存当前」弹窗里分类下拉的默认值"
             >
               <option value="">未分类</option>
               {categories.map((cat) => (
@@ -641,7 +813,7 @@ export function WorkspaceSidebar({
                       <button
                         type="button"
                         className="cat-tree-group-title"
-                        title="设为「保存当前」的分类"
+                        title="设为「保存当前」弹窗的默认分类"
                         onClick={() =>
                           setSaveCategoryId(
                             group.key === "uncategorized" ? null : group.key,
@@ -712,10 +884,17 @@ export function WorkspaceSidebar({
             <WorkspaceDetailModal
               row={detailRow}
               categories={categories}
+              canRestore={Boolean(canRestoreWorkspaceRow?.(detailRow))}
               onClose={() => setDetailRow(null)}
               onOpen={(row, payload) => {
                 onOpenWorkspace(row, payload);
                 setDetailRow(null);
+              }}
+              onRestoreCwds={async (row) => {
+                if (!onRestoreWorkspaceCwds) {
+                  throw new Error("当前无法恢复目录");
+                }
+                await onRestoreWorkspaceCwds(row);
               }}
               onChangeCategory={(row, categoryId) => {
                 void changeCategory(row, categoryId).then(() => {
@@ -734,6 +913,43 @@ export function WorkspaceSidebar({
                     return refresh();
                   })
                   .catch((e) => setError(String(e)));
+              }}
+            />
+          ) : null}
+          {saveModalOpen ? (
+            <SaveWorkspaceModal
+              key={saveModalNonce}
+              categories={categories}
+              initialCategoryId={saveCategoryId}
+              saving={saveModalSaving}
+              formError={saveModalError}
+              onClose={() => {
+                if (saveModalSaving) return;
+                setSaveModalOpen(false);
+                setSaveModalError("");
+              }}
+              onConfirm={(name, categoryId) => {
+                const trimmed = name.trim();
+                if (!trimmed) {
+                  setSaveModalError("工作区名称不能为空");
+                  return;
+                }
+                setSaveModalError("");
+                setSaveModalSaving(true);
+                void Promise.resolve(onSaveCurrent(trimmed, categoryId))
+                  .then(() => {
+                    setSaveCategoryId(categoryId);
+                    setSaveModalOpen(false);
+                    setSaveModalError("");
+                  })
+                  .catch((e) => {
+                    setSaveModalError(
+                      e instanceof Error ? e.message : String(e),
+                    );
+                  })
+                  .finally(() => {
+                    setSaveModalSaving(false);
+                  });
               }}
             />
           ) : null}

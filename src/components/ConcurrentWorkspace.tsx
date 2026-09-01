@@ -30,7 +30,17 @@ interface ConcurrentWorkspaceProps {
   onFilesOpenChange: (open: boolean) => void;
   canSaveWorkspace?: boolean;
   saveWorkspaceDisabledReason?: string;
-  onSaveWorkspace?: (categoryId: number | null) => void;
+  onSaveWorkspace?: (
+    name: string,
+    categoryId: number | null,
+  ) => void | Promise<void>;
+  canRestoreWorkspace?: boolean;
+  restoreWorkspaceDisabledReason?: string;
+  onRestoreWorkspace?: () => void | Promise<void>;
+  canRestoreWorkspaceRow?: (row: SavedWorkspaceRow) => boolean;
+  onRestoreWorkspaceCwds?: (
+    row: SavedWorkspaceRow,
+  ) => void | Promise<void>;
   onOpenWorkspace?: (
     row: SavedWorkspaceRow,
     payload: WorkspacePayload,
@@ -100,6 +110,11 @@ export function ConcurrentWorkspace({
   canSaveWorkspace = false,
   saveWorkspaceDisabledReason,
   onSaveWorkspace,
+  canRestoreWorkspace = false,
+  restoreWorkspaceDisabledReason,
+  onRestoreWorkspace,
+  canRestoreWorkspaceRow,
+  onRestoreWorkspaceCwds,
   onOpenWorkspace,
   workspaceRefreshToken = 0,
   onFocusSession,
@@ -398,7 +413,17 @@ export function ConcurrentWorkspace({
           filesConnected={focusedTab?.status === "connected"}
           canSaveCurrent={canSaveWorkspace}
           saveDisabledReason={saveWorkspaceDisabledReason}
-          onSaveCurrent={(categoryId) => onSaveWorkspace?.(categoryId)}
+          onSaveCurrent={async (name, categoryId) => {
+            if (!onSaveWorkspace) {
+              throw new Error("当前无法保存工作区");
+            }
+            await onSaveWorkspace(name, categoryId);
+          }}
+          canRestoreCurrent={canRestoreWorkspace}
+          restoreDisabledReason={restoreWorkspaceDisabledReason}
+          onRestoreCurrent={onRestoreWorkspace}
+          canRestoreWorkspaceRow={canRestoreWorkspaceRow}
+          onRestoreWorkspaceCwds={onRestoreWorkspaceCwds}
           onOpenWorkspace={(row, payload) => onOpenWorkspace?.(row, payload)}
           refreshToken={workspaceRefreshToken}
           canInjectCommand={canInjectCommand}
