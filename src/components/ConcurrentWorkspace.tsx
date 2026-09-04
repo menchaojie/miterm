@@ -37,6 +37,9 @@ interface ConcurrentWorkspaceProps {
   canRestoreWorkspace?: boolean;
   restoreWorkspaceDisabledReason?: string;
   onRestoreWorkspace?: () => void | Promise<void>;
+  canUpdateWorkspace?: boolean;
+  updateWorkspaceDisabledReason?: string;
+  onUpdateWorkspace?: () => void | Promise<void>;
   canRestoreWorkspaceRow?: (row: SavedWorkspaceRow) => boolean;
   onRestoreWorkspaceCwds?: (
     row: SavedWorkspaceRow,
@@ -113,6 +116,9 @@ export function ConcurrentWorkspace({
   canRestoreWorkspace = false,
   restoreWorkspaceDisabledReason,
   onRestoreWorkspace,
+  canUpdateWorkspace = false,
+  updateWorkspaceDisabledReason,
+  onUpdateWorkspace,
   canRestoreWorkspaceRow,
   onRestoreWorkspaceCwds,
   onOpenWorkspace,
@@ -422,6 +428,9 @@ export function ConcurrentWorkspace({
           canRestoreCurrent={canRestoreWorkspace}
           restoreDisabledReason={restoreWorkspaceDisabledReason}
           onRestoreCurrent={onRestoreWorkspace}
+          canUpdateCurrent={canUpdateWorkspace}
+          updateDisabledReason={updateWorkspaceDisabledReason}
+          onUpdateCurrent={onUpdateWorkspace}
           canRestoreWorkspaceRow={canRestoreWorkspaceRow}
           onRestoreWorkspaceCwds={onRestoreWorkspaceCwds}
           onOpenWorkspace={(row, payload) => onOpenWorkspace?.(row, payload)}

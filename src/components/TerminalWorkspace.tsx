@@ -48,6 +48,9 @@ interface TerminalWorkspaceProps {
   canRestoreWorkspace?: boolean;
   restoreWorkspaceDisabledReason?: string;
   onRestoreWorkspace?: () => void | Promise<void>;
+  canUpdateWorkspace?: boolean;
+  updateWorkspaceDisabledReason?: string;
+  onUpdateWorkspace?: () => void | Promise<void>;
   canRestoreWorkspaceRow?: (
     row: import("../workspace").SavedWorkspaceRow,
   ) => boolean;
@@ -354,6 +357,9 @@ export function TerminalWorkspace({
   canRestoreWorkspace = false,
   restoreWorkspaceDisabledReason,
   onRestoreWorkspace,
+  canUpdateWorkspace = false,
+  updateWorkspaceDisabledReason,
+  onUpdateWorkspace,
   canRestoreWorkspaceRow,
   onRestoreWorkspaceCwds,
   onOpenWorkspace,
@@ -773,6 +779,9 @@ export function TerminalWorkspace({
             canRestoreCurrent={canRestoreWorkspace}
             restoreDisabledReason={restoreWorkspaceDisabledReason}
             onRestoreCurrent={onRestoreWorkspace}
+            canUpdateCurrent={canUpdateWorkspace}
+            updateDisabledReason={updateWorkspaceDisabledReason}
+            onUpdateCurrent={onUpdateWorkspace}
             canRestoreWorkspaceRow={canRestoreWorkspaceRow}
             onRestoreWorkspaceCwds={onRestoreWorkspaceCwds}
             onOpenWorkspace={(row, payload) =>

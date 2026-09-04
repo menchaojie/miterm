@@ -60,12 +60,14 @@ import {
 import { isRestorableCwd, shellSingleQuote, guessUnixHome } from "./cwd";
 import {
   hydrateLayout,
+  listWorkspaces,
   parseWorkspacePayload,
   planWorkspaceCwdRestore,
   resolveHostsForPayload,
   saveWorkspaceRow,
   serializeFolderWorkspace,
   serializeGroupWorkspace,
+  updateWorkspaceRow,
   type SavedWorkspaceRow,
   type WorkspacePayload,
 } from "./workspace";
@@ -1323,6 +1325,106 @@ function App() {
     [activeFolder, activeGroup, sessionTabs],
   );
 
+  /** 用当前会话覆盖「开来源」工作区，并刷新内存快照供恢复目录使用 */
+  const handleUpdateCurrentWorkspace = useCallback(async (): Promise<void> => {
+    const sourceId =
+      activeFolder?.sourceWorkspaceId ?? activeGroup?.sourceWorkspaceId ?? null;
+    if (sourceId == null) {
+      const msg = "当前会话不是从已保存工作区打开的，请用「保存当前」新建";
+      setListError(msg);
+      throw new Error(msg);
+    }
+
+    let kind: "folder" | "group";
+    let payloadObj: WorkspacePayload;
+    let folderId: string | null = null;
+    let groupId: string | null = null;
+
+    if (activeFolder?.sourceWorkspaceId === sourceId) {
+      const folder = normalizeHostFolder(activeFolder);
+      const folderSessions = sessionTabs.filter(
+        (t) => t.folderId === folder.id,
+      );
+      payloadObj = serializeFolderWorkspace(folder, folderSessions);
+      kind = "folder";
+      folderId = folder.id;
+    } else if (activeGroup?.sourceWorkspaceId === sourceId) {
+      const groupSessions = sessionTabs.filter(
+        (t) => t.groupId === activeGroup.id,
+      );
+      const payload = serializeGroupWorkspace(activeGroup, groupSessions);
+      if (!payload) {
+        const msg = "并发工作区至少需要 2 台有效主机";
+        setListError(msg);
+        throw new Error(msg);
+      }
+      payloadObj = payload;
+      kind = "group";
+      groupId = activeGroup.id;
+    } else {
+      const msg = "无法匹配当前会话与来源工作区";
+      setListError(msg);
+      throw new Error(msg);
+    }
+
+    try {
+      const rows = await listWorkspaces();
+      const row = rows.find((r) => r.id === sourceId);
+      if (!row) {
+        const msg = "来源工作区已删除，请改用「保存当前」新建";
+        setListError(msg);
+        throw new Error(msg);
+      }
+      if (row.kind !== kind) {
+        const msg = `工作区类型不一致（已保存为${row.kind === "group" ? "并发" : "主机夹"}），无法覆盖`;
+        setListError(msg);
+        throw new Error(msg);
+      }
+      if (
+        !window.confirm(
+          `确定用当前布局与目录覆盖工作区「${row.name}」？此操作不可撤销。`,
+        )
+      ) {
+        return;
+      }
+
+      const payloadJson = JSON.stringify(payloadObj);
+      await updateWorkspaceRow({
+        id: row.id,
+        name: row.name,
+        kind,
+        payload: payloadJson,
+        categoryId: row.categoryId,
+      });
+
+      if (folderId) {
+        setFolders((prev) =>
+          prev.map((f) =>
+            f.id === folderId
+              ? { ...f, sourceWorkspacePayloadJson: payloadJson }
+              : f,
+          ),
+        );
+      }
+      if (groupId) {
+        setGroups((prev) =>
+          prev.map((g) =>
+            g.id === groupId
+              ? { ...g, sourceWorkspacePayloadJson: payloadJson }
+              : g,
+          ),
+        );
+      }
+
+      setListError("");
+      setWorkspaceRefreshToken((n) => n + 1);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setListError(msg);
+      throw e instanceof Error ? e : new Error(msg);
+    }
+  }, [activeFolder, activeGroup, sessionTabs]);
+
   const handleOpenWorkspace = useCallback(
     async (row: SavedWorkspaceRow, payload: WorkspacePayload) => {
       const check = resolveHostsForPayload(payload, savedHostsRef.current);
@@ -1859,6 +1961,8 @@ function App() {
               }}
               canRestoreCurrent={false}
               restoreDisabledReason="请先打开已保存的工作区"
+              canUpdateCurrent={false}
+              updateDisabledReason="请先打开已保存的工作区"
               canRestoreWorkspaceRow={canRestoreWorkspaceRow}
               onRestoreWorkspaceCwds={(row) => handleRestoreWorkspaceCwds(row)}
               onOpenWorkspace={(row, payload) => {
@@ -1930,6 +2034,9 @@ function App() {
                   canRestoreWorkspace={group.sourceWorkspaceId != null}
                   restoreWorkspaceDisabledReason="请先从已保存工作区打开"
                   onRestoreWorkspace={() => handleRestoreWorkspaceCwds()}
+                  canUpdateWorkspace={group.sourceWorkspaceId != null}
+                  updateWorkspaceDisabledReason="请先从已保存工作区打开"
+                  onUpdateWorkspace={() => handleUpdateCurrentWorkspace()}
                   canRestoreWorkspaceRow={canRestoreWorkspaceRow}
                   onRestoreWorkspaceCwds={(row) =>
                     handleRestoreWorkspaceCwds(row)
@@ -2011,6 +2118,9 @@ function App() {
                   canRestoreWorkspace={folder.sourceWorkspaceId != null}
                   restoreWorkspaceDisabledReason="请先从已保存工作区打开"
                   onRestoreWorkspace={() => handleRestoreWorkspaceCwds()}
+                  canUpdateWorkspace={folder.sourceWorkspaceId != null}
+                  updateWorkspaceDisabledReason="请先从已保存工作区打开"
+                  onUpdateWorkspace={() => handleUpdateCurrentWorkspace()}
                   canRestoreWorkspaceRow={canRestoreWorkspaceRow}
                   onRestoreWorkspaceCwds={(row) =>
                     handleRestoreWorkspaceCwds(row)

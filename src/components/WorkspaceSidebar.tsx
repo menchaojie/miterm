@@ -99,6 +99,7 @@ function WorkspaceDetailModal({
   onClose,
   onOpen,
   onRestoreCwds,
+  onRename,
   onChangeCategory,
   onDelete,
 }: {
@@ -108,6 +109,7 @@ function WorkspaceDetailModal({
   onClose: () => void;
   onOpen: (row: SavedWorkspaceRow, payload: WorkspacePayload) => void;
   onRestoreCwds: (row: SavedWorkspaceRow) => void | Promise<void>;
+  onRename: (row: SavedWorkspaceRow, name: string) => void | Promise<void>;
   onChangeCategory: (
     row: SavedWorkspaceRow,
     categoryId: number | null,
@@ -120,6 +122,35 @@ function WorkspaceDetailModal({
   const time = row.updatedAt
     ? new Date(row.updatedAt * 1000).toLocaleString()
     : "—";
+  const [nameDraft, setNameDraft] = useState(row.name);
+  const [nameError, setNameError] = useState("");
+  const [renaming, setRenaming] = useState(false);
+
+  useEffect(() => {
+    setNameDraft(row.name);
+    setNameError("");
+  }, [row.id, row.name]);
+
+  const commitRename = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setNameError("工作区名称不能为空");
+      setNameDraft(row.name);
+      return;
+    }
+    if (trimmed === row.name) {
+      setNameError("");
+      return;
+    }
+    setNameError("");
+    setRenaming(true);
+    void Promise.resolve(onRename(row, trimmed))
+      .catch((e) => {
+        setNameError(e instanceof Error ? e.message : String(e));
+        setNameDraft(row.name);
+      })
+      .finally(() => setRenaming(false));
+  };
 
   return (
     <div
@@ -137,7 +168,7 @@ function WorkspaceDetailModal({
       >
         <header className="sidebar-detail-header">
           <h3 id="workspace-detail-title" className="sidebar-detail-title">
-            {row.name}
+            工作区详情
           </h3>
           <button
             type="button"
@@ -155,6 +186,25 @@ function WorkspaceDetailModal({
             {panes ? ` · ${panes} 窗格` : ""}
           </p>
           <p className="sidebar-detail-meta">更新于 {time}</p>
+          <label className="saved-command-field">
+            <span>名称</span>
+            <input
+              type="text"
+              value={nameDraft}
+              disabled={renaming}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={() => commitRename()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+            />
+          </label>
+          {nameError ? (
+            <div className="workspace-list-error">{nameError}</div>
+          ) : null}
           <label className="saved-command-field">
             <span>分类</span>
             <select
@@ -361,6 +411,10 @@ export interface WorkspaceSidebarProps {
   canRestoreCurrent?: boolean;
   restoreDisabledReason?: string;
   onRestoreCurrent?: () => void | Promise<void>;
+  /** 用当前会话布局/目录覆盖开来源工作区 */
+  canUpdateCurrent?: boolean;
+  updateDisabledReason?: string;
+  onUpdateCurrent?: () => void | Promise<void>;
   /** 详情里「恢复目录」：该行工作区是否已有打开的会话 */
   canRestoreWorkspaceRow?: (row: SavedWorkspaceRow) => boolean;
   onRestoreWorkspaceCwds?: (row: SavedWorkspaceRow) => void | Promise<void>;
@@ -396,6 +450,9 @@ export function WorkspaceSidebar({
   canRestoreCurrent = false,
   restoreDisabledReason,
   onRestoreCurrent,
+  canUpdateCurrent = false,
+  updateDisabledReason,
+  onUpdateCurrent,
   canRestoreWorkspaceRow,
   onRestoreWorkspaceCwds,
   onOpenWorkspace,
@@ -625,6 +682,22 @@ export function WorkspaceSidebar({
     }
   };
 
+  const renameWorkspace = async (row: SavedWorkspaceRow, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("工作区名称不能为空");
+    await updateWorkspaceRow({
+      id: row.id,
+      name: trimmed,
+      kind: row.kind,
+      payload: row.payload,
+      categoryId: row.categoryId,
+    });
+    setDetailRow((prev) =>
+      prev && prev.id === row.id ? { ...prev, name: trimmed } : prev,
+    );
+    await refresh();
+  };
+
   return (
     <aside
       className="workspace-sidebar"
@@ -729,6 +802,22 @@ export function WorkspaceSidebar({
               }}
             >
               保存当前
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={!canUpdateCurrent}
+              title={
+                canUpdateCurrent
+                  ? "用当前布局与各窗目录覆盖开来源工作区（不新建）"
+                  : updateDisabledReason ||
+                    "请先从已保存工作区打开后再更新"
+              }
+              onClick={() => {
+                void onUpdateCurrent?.();
+              }}
+            >
+              更新保存
             </button>
             <button
               type="button"
@@ -896,6 +985,7 @@ export function WorkspaceSidebar({
                 }
                 await onRestoreWorkspaceCwds(row);
               }}
+              onRename={(row, name) => renameWorkspace(row, name)}
               onChangeCategory={(row, categoryId) => {
                 void changeCategory(row, categoryId).then(() => {
                   setDetailRow((prev) =>
