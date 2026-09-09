@@ -265,7 +265,7 @@ pnpm tauri dev
 | 12 | 主机夹二级条 | 常驻细条（约 20px，色深于一级顶栏）；不遮挡终端正文 |
 | 13 | 远程 `exit` | 终端提示已退出；出现「重新连接」「关闭窗口」；不自动重连 |
 | 14 | 模拟异常断线（或关服务） | 开启自动重连时打印重连文案并恢复；关 Tab 不会重连 |
-| 14b | SSH 会话连续输入 / Tab 补全 / 空闲挂机 | 不应无故「正在重连」；若仍出现请查看 stderr：`[ssh] channel read error` / `keepalive soft/fatal` / `channel eof` |
+| 14b | SSH 会话连续输入 / Tab 补全 / 空闲挂机 / 同机四窗 | 不应无故「正在重连」；stderr 若有 `keepalive ignored` 属正常（不拆线）；真断线才见 `channel read error` / `channel eof` |
 | 15 | 设置 → 断线自动重连 | 可关；可改最大次数 |
 | 16 | `cd /tmp` 或相对 `cd ai_completion/` 后 `exit` 再重连 | 重连成功后自动 `cd` 回原目录（有「已恢复工作目录」提示）；登录仍有 Last login |
 | 16b | `cd ai` + Tab 补全到 `ai_completion/` 后 `exit` 再重连 | 应恢复到完整目录，不能变成 `/home/…/ai` |
