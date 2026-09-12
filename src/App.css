@@ -1824,6 +1824,28 @@ a,
   min-width: 6em;
 }
 
+.settings-about-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.settings-about-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: var(--font-sm);
+  color: var(--text-dim);
+}
+
+.settings-about-version {
+  font-size: var(--font-lg);
+  font-weight: 500;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
 .settings-number-input {
   width: 72px;
   padding: 4px 8px;

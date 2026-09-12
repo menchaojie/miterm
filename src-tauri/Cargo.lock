@@ -2182,7 +2182,7 @@ dependencies = [
 
 [[package]]
 name = "miterm"
-version = "1.0.0"
+version = "1.0.7"
 dependencies = [
  "parking_lot",
  "portable-pty",

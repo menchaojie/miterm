@@ -40,13 +40,15 @@ export type SettingsTabId =
   | "connection"
   | "shortcutsNav"
   | "shortcutsPane"
-  | "shortcutsFiles";
+  | "shortcutsFiles"
+  | "about";
 
 export const SETTINGS_TABS: { id: SettingsTabId; label: string }[] = [
   { id: "connection", label: "连接" },
   { id: "shortcutsNav", label: "Tab 导航" },
   { id: "shortcutsPane", label: "窗格" },
   { id: "shortcutsFiles", label: "远程文件" },
+  { id: "about", label: "关于" },
 ];
 
 export type AppSettings = {
@@ -231,7 +233,8 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   shortcuts: { ...DEFAULT_SHORTCUTS },
-  autoReconnect: true,
+  /** 默认关闭：对齐 Electerm/Xterminal「钝感」；避免误杀后刷 MOTD */
+  autoReconnect: false,
   autoReconnectMaxAttempts: 5,
   ctrlWheelZoom: true,
   terminalFontSize: 14,

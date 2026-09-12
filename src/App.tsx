@@ -390,7 +390,12 @@ function App() {
     async (
       sessionId: string,
       cwd: string | null | undefined,
-      opts?: { delayMs?: number; skipIfCancelled?: boolean },
+      opts?: {
+        delayMs?: number;
+        skipIfCancelled?: boolean;
+        /** 先打断残留输入，避免出现 hcd 等脏命令 */
+        clearPartialLine?: boolean;
+      },
     ) => {
       if (!isRestorableCwd(cwd)) return;
       const delayMs = opts?.delayMs ?? 0;
@@ -403,8 +408,12 @@ function App() {
       if (!tab || tab.status !== "connected") return;
       if (tab.kind === "local") return;
 
+      // Ctrl+C + 换行清掉半截输入，再 cd（重连后防 hcd）
+      const prefix = opts?.clearPartialLine ? "\u0003\n" : "";
       const data = Array.from(
-        new TextEncoder().encode(`cd ${shellSingleQuote(cwd)}\n`),
+        new TextEncoder().encode(
+          `${prefix}cd ${shellSingleQuote(cwd)}\n`,
+        ),
       );
       try {
         await invoke("ssh_write", { sessionId, data });
@@ -422,10 +431,11 @@ function App() {
     async (sessionId: string, cwd: string | null | undefined) => {
       if (!isRestorableCwd(cwd)) return;
       if (cancelReconnectRef.current.has(sessionId)) return;
-      // 等 MOTD / hook 静默安装 / 首个提示符稍稳后再 cd
+      // 等 MOTD / 首个提示符更稳；清半截输入后再 cd
       await applySessionCwd(sessionId, cwd, {
-        delayMs: 450,
+        delayMs: 1600,
         skipIfCancelled: true,
+        clearPartialLine: true,
       });
     },
     [applySessionCwd],
@@ -456,8 +466,13 @@ function App() {
         if (autoReconnectBusyRef.current.has(sessionId)) return;
         autoReconnectBusyRef.current.add(sessionId);
         const max = settingsRef.current.autoReconnectMaxAttempts;
-        pushNotice(sessionId, "连接已断开。");
+        pushNotice(
+          sessionId,
+          "连接已断开。将短暂等待后重试（减少握手失败）。",
+        );
         try {
+          // 首轮冷却：避免断线瞬间 KEX（Session -8）失败
+          await new Promise((r) => setTimeout(r, 2500));
           for (let attempt = 1; attempt <= max; attempt++) {
             if (cancelReconnectRef.current.has(sessionId)) return;
             if (!sessionTabsRef.current.some((t) => t.id === sessionId)) return;
@@ -491,7 +506,16 @@ function App() {
             } catch (e) {
               pushNotice(sessionId, `重连失败：${String(e)}`);
               if (attempt < max) {
-                await new Promise((r) => setTimeout(r, 800 * attempt));
+                // 指数退避，握手失败时多等一会
+                const msg = String(e).toLowerCase();
+                const kexFail =
+                  msg.includes("handshake") ||
+                  msg.includes("exchange encryption") ||
+                  msg.includes("session(-8)");
+                const base = kexFail ? 2800 : 1600;
+                await new Promise((r) =>
+                  setTimeout(r, base * attempt),
+                );
               }
             }
           }

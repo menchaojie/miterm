@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useState } from "react";
 import {
   AUTO_RECONNECT_MAX_ATTEMPTS_MAX,
@@ -36,6 +37,7 @@ export function SettingsModal({
   const [recording, setRecording] = useState<ShortcutActionId | null>(null);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<SettingsTabId>("connection");
+  const [appVersion, setAppVersion] = useState<string>("…");
 
   useEffect(() => {
     if (!open) return;
@@ -44,6 +46,21 @@ export function SettingsModal({
     setError("");
     setActiveTab("connection");
   }, [open, settings]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void getVersion()
+      .then((v) => {
+        if (!cancelled) setAppVersion(v);
+      })
+      .catch(() => {
+        if (!cancelled) setAppVersion("未知");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open || !recording) return;
@@ -96,6 +113,10 @@ export function SettingsModal({
   };
 
   const shortcutActions = SHORTCUT_ACTIONS.filter((a) => a.tab === activeTab);
+  const isShortcutTab =
+    activeTab === "shortcutsNav" ||
+    activeTab === "shortcutsPane" ||
+    activeTab === "shortcutsFiles";
 
   const shortcutHint =
     activeTab === "shortcutsNav"
@@ -148,103 +169,122 @@ export function SettingsModal({
 
         <div className="settings-tab-panel" role="tabpanel">
           {activeTab === "connection" ? (
+            <>
+              <section className="settings-section">
+                <p className="settings-hint">
+                  默认关闭自动重连（更接近 Xterminal / Electerm：断了停住，手动点「重新连接」）。开启后会先等待再试，减少握手失败；主动关
+                  Tab、远程 <code>exit</code> 仍不会自动重连。TCP/SSH keepalive
+                  仅用于减少空闲被踢，失败不会单独拆线。
+                </p>
+                <label className="settings-check-row">
+                  <input
+                    type="checkbox"
+                    checked={draft.autoReconnect}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        autoReconnect: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>断线自动重连</span>
+                </label>
+                <label className="settings-field-row">
+                  <span className="settings-field-label">最大重试次数</span>
+                  <input
+                    type="number"
+                    className="settings-number-input"
+                    min={AUTO_RECONNECT_MAX_ATTEMPTS_MIN}
+                    max={AUTO_RECONNECT_MAX_ATTEMPTS_MAX}
+                    disabled={!draft.autoReconnect}
+                    value={draft.autoReconnectMaxAttempts}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      setDraft((d) => ({
+                        ...d,
+                        autoReconnectMaxAttempts: Number.isFinite(n)
+                          ? n
+                          : d.autoReconnectMaxAttempts,
+                      }));
+                    }}
+                  />
+                </label>
+              </section>
+              <section className="settings-section">
+                <p className="settings-section-title">终端外观</p>
+                <p className="settings-hint">
+                  仅缩放终端字体（不影响 Tab、侧栏等界面）。默认字号{" "}
+                  {TERMINAL_FONT_SIZE_DEFAULT}px，范围{" "}
+                  {TERMINAL_FONT_SIZE_MIN}～{TERMINAL_FONT_SIZE_MAX}。
+                </p>
+                <label className="settings-check-row">
+                  <input
+                    type="checkbox"
+                    checked={draft.ctrlWheelZoom}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        ctrlWheelZoom: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>启用 Ctrl + 滚轮缩放终端字体</span>
+                </label>
+                <label className="settings-field-row">
+                  <span className="settings-field-label">终端字号 (px)</span>
+                  <input
+                    type="number"
+                    className="settings-number-input"
+                    min={TERMINAL_FONT_SIZE_MIN}
+                    max={TERMINAL_FONT_SIZE_MAX}
+                    value={draft.terminalFontSize}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      setDraft((d) => ({
+                        ...d,
+                        terminalFontSize: Number.isFinite(n)
+                          ? clampTerminalFontSize(n)
+                          : d.terminalFontSize,
+                      }));
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() =>
+                      setDraft((d) => ({
+                        ...d,
+                        terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
+                      }))
+                    }
+                  >
+                    重置
+                  </button>
+                </label>
+              </section>
+            </>
+          ) : null}
+
+          {activeTab === "about" ? (
             <section className="settings-section">
+              <p className="settings-section-title">关于 miterm</p>
               <p className="settings-hint">
-                异常断线（网络/超时）时可自动重连；主动关 Tab、以及远程{" "}
-                <code>exit</code>{" "}
-                退出不会自动重连（终端内可点「重新连接」）。应用会启用
-                TCP/SSH keepalive 以减少空闲被踢。
+                本地 SSH / 终端客户端。版本号来自应用打包配置。
               </p>
-              <label className="settings-check-row">
-                <input
-                  type="checkbox"
-                  checked={draft.autoReconnect}
-                  onChange={(e) =>
-                    setDraft((d) => ({
-                      ...d,
-                      autoReconnect: e.target.checked,
-                    }))
-                  }
-                />
-                <span>断线自动重连</span>
-              </label>
-              <label className="settings-field-row">
-                <span className="settings-field-label">最大重试次数</span>
-                <input
-                  type="number"
-                  className="settings-number-input"
-                  min={AUTO_RECONNECT_MAX_ATTEMPTS_MIN}
-                  max={AUTO_RECONNECT_MAX_ATTEMPTS_MAX}
-                  disabled={!draft.autoReconnect}
-                  value={draft.autoReconnectMaxAttempts}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10);
-                    setDraft((d) => ({
-                      ...d,
-                      autoReconnectMaxAttempts: Number.isFinite(n)
-                        ? n
-                        : d.autoReconnectMaxAttempts,
-                    }));
-                  }}
-                />
-              </label>
+              <div className="settings-about-rows">
+                <div className="settings-about-row">
+                  <span className="settings-field-label">应用</span>
+                  <span>miterm</span>
+                </div>
+                <div className="settings-about-row">
+                  <span className="settings-field-label">版本</span>
+                  <span className="settings-about-version">{appVersion}</span>
+                </div>
+              </div>
             </section>
           ) : null}
 
-          {activeTab === "connection" ? (
-            <section className="settings-section">
-              <p className="settings-section-title">终端外观</p>
-              <p className="settings-hint">
-                仅缩放终端字体（不影响 Tab、侧栏等界面）。默认字号{" "}
-                {TERMINAL_FONT_SIZE_DEFAULT}px，范围{" "}
-                {TERMINAL_FONT_SIZE_MIN}～{TERMINAL_FONT_SIZE_MAX}。
-              </p>
-              <label className="settings-check-row">
-                <input
-                  type="checkbox"
-                  checked={draft.ctrlWheelZoom}
-                  onChange={(e) =>
-                    setDraft((d) => ({
-                      ...d,
-                      ctrlWheelZoom: e.target.checked,
-                    }))
-                  }
-                />
-                <span>启用 Ctrl + 滚轮缩放终端字体</span>
-              </label>
-              <label className="settings-field-row">
-                <span className="settings-field-label">终端字号 (px)</span>
-                <input
-                  type="number"
-                  className="settings-number-input"
-                  min={TERMINAL_FONT_SIZE_MIN}
-                  max={TERMINAL_FONT_SIZE_MAX}
-                  value={draft.terminalFontSize}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10);
-                    setDraft((d) => ({
-                      ...d,
-                      terminalFontSize: Number.isFinite(n)
-                        ? clampTerminalFontSize(n)
-                        : d.terminalFontSize,
-                    }));
-                  }}
-                />
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() =>
-                    setDraft((d) => ({
-                      ...d,
-                      terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
-                    }))
-                  }
-                >
-                  重置
-                </button>
-              </label>
-            </section>
-          ) : (
+          {isShortcutTab ? (
             <section className="settings-section">
               {shortcutHint ? (
                 <p className="settings-hint">{shortcutHint}</p>
@@ -302,7 +342,7 @@ export function SettingsModal({
               </div>
               {error ? <div className="settings-error">{error}</div> : null}
             </section>
-          )}
+          ) : null}
         </div>
 
         <div className="settings-footer">
