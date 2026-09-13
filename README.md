@@ -10,6 +10,7 @@
 | [docs/Windows环境安装清单.md](docs/Windows环境安装清单.md) | Windows 10/11 开发环境安装步骤 |
 | [docs/开发文档.md](docs/开发文档.md) | 架构、目录约定、接口、扩展路线 |
 | [docs/使用与Windows联调说明.md](docs/使用与Windows联调说明.md) | **使用说明、Linux 编译检查、Windows GUI 联调** |
+| [docs/保活Agent.md](docs/保活Agent.md) | **远端 PTY 保活 agent（miterm-agent）架构 / 构建 / 协议** |
 
 ## 快速开始
 
@@ -48,6 +49,8 @@ pnpm tauri dev
 - SQLite 保存主机（明文密码，本机便利）
 - xterm 终端 + 窗口 resize 同步 PTY
 - **SFTP**：侧栏「远程文件」浏览远程目录；上传支持菜单选文件/夹，或拖放到上传区确认后上传；支持整夹下载；传输中显示底部进度条，完成后该行「下载」左侧出现「已下载」可打开本机位置；本机文件已删时自动清标记；悬停可点 × 主动清除标记
+
+**保活 agent（进行中）**：独立 crate `agent/`（`miterm-agent`）可在远端握 PTY，断 SSH 后会话仍在；协议与手动部署见 [保活Agent.md](docs/保活Agent.md)。**尚未**接入 GUI 自动安装。
 
 **暂不包含**：私钥、密码加密、Shadcn。
 

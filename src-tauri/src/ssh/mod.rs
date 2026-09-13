@@ -116,14 +116,14 @@ fn is_ssh_soft_error(err: &ssh2::Error) -> bool {
     }
 }
 
-/// 读错误是否更像瞬时毛刺（对端忙/swap 高），而非连接已死。
-fn is_io_transient_read_error(err: &std::io::Error) -> bool {
-    if is_io_soft_error(err) {
-        return true;
-    }
+/// 只有 TCP/会话已确认死亡才拆线。超时、忙、未知错误一律继续读。
+fn is_fatal_tcp_error(err: &std::io::Error) -> bool {
     let msg = err.to_string().to_ascii_lowercase();
-    // 对端短暂无响应时 libssh2 偶发带这些文案；真正 reset/broken 仍走硬错误
-    msg.contains("temporarily") || msg.contains("try again") || msg.contains("resource")
+    msg.contains("connection reset")
+        || msg.contains("reset by peer")
+        || msg.contains("broken pipe")
+        || msg.contains("connection aborted")
+        || msg.contains("not connected")
 }
 
 pub(crate) fn apply_tcp_keepalive(tcp: &TcpStream) -> Result<(), String> {
@@ -244,14 +244,14 @@ fn run_session_io(
     sessions: Arc<Mutex<HashMap<String, ActiveSession>>>,
 ) {
     // 读用短超时轮询；写/keepalive 临时加长超时。全程同线程串行。
-    // 策略对齐「钝感」：keepalive 失败不拆线；只有 channel EOF / 明确读死才结束。
+    // 长连接：保活失败、读超时、未确认的读错误都不拆线；仅 channel EOF 或 TCP reset/broken。
     session.set_blocking(true);
     session.set_timeout(READ_POLL_TIMEOUT_MS);
 
     let mut buf = [0u8; 8192];
     let mut last_ka = Instant::now();
     let mut ka_fail_streak: u32 = 0;
-    let mut read_transient_streak: u32 = 0;
+    let mut read_warn_streak: u32 = 0;
 
     let close_reason = 'io: {
         loop {
@@ -261,7 +261,7 @@ fn run_session_io(
             }
             if had_ok {
                 ka_fail_streak = 0;
-                read_transient_streak = 0;
+                read_warn_streak = 0;
             }
 
             if last_ka.elapsed() >= Duration::from_secs(KEEPALIVE_INTERVAL_SECS) {
@@ -293,53 +293,30 @@ fn run_session_io(
                 }
                 Ok(n) => {
                     ka_fail_streak = 0;
-                    read_transient_streak = 0;
+                    read_warn_streak = 0;
                     let payload = SshOutputPayload {
                         session_id: session_id.clone(),
                         data: buf[..n].to_vec(),
                     };
                     if app.emit("ssh-output", payload).is_err() {
-                        eprintln!("[ssh] emit ssh-output failed ({session_id})");
-                        break 'io Some("error");
+                        // UI 暂时收不到也不拆 SSH
+                        eprintln!("[ssh] emit ssh-output failed ({session_id}), keep session");
                     }
                 }
                 Err(e) if is_io_soft_error(&e) => {
                     // 正常：无数据 / 读轮询超时
-                    read_transient_streak = 0;
                 }
-                Err(e) if is_io_transient_read_error(&e) => {
-                    // 对端忙时的瞬时读错：容忍一段时间，不立刻重连刷 MOTD
-                    read_transient_streak = read_transient_streak.saturating_add(1);
-                    if read_transient_streak == 1 || read_transient_streak % 20 == 0 {
-                        eprintln!(
-                            "[ssh] channel read transient ({session_id}, n={read_transient_streak}): {e}"
-                        );
-                    }
-                    if read_transient_streak >= 200 {
-                        // ~20s 量级仍持续瞬时错，再当异常（读轮询约 100ms）
-                        eprintln!(
-                            "[ssh] channel read transient limit ({session_id}): giving up"
-                        );
-                        break 'io Some("error");
-                    }
-                    thread::sleep(Duration::from_millis(20));
+                Err(e) if is_fatal_tcp_error(&e) => {
+                    eprintln!("[ssh] channel read fatal ({session_id}): {e:?} / {e}");
+                    break 'io Some("error");
                 }
                 Err(e) => {
-                    let msg = e.to_string().to_ascii_lowercase();
-                    // reset / broken pipe / not connected → 真断线
-                    eprintln!("[ssh] channel read error ({session_id}): {e:?} / {e}");
-                    if msg.contains("reset")
-                        || msg.contains("broken")
-                        || msg.contains("not connected")
-                        || msg.contains("connection aborted")
-                        || msg.contains("eof")
-                    {
-                        break 'io Some("error");
-                    }
-                    // 未识别错误：偏钝，先当瞬时（避免误杀）
-                    read_transient_streak = read_transient_streak.saturating_add(1);
-                    if read_transient_streak >= 50 {
-                        break 'io Some("error");
+                    // 未确认死亡：继续循环，避免对端忙时被自己拆线
+                    read_warn_streak = read_warn_streak.saturating_add(1);
+                    if read_warn_streak == 1 || read_warn_streak % 50 == 0 {
+                        eprintln!(
+                            "[ssh] channel read kept ({session_id}, n={read_warn_streak}): {e}"
+                        );
                     }
                     thread::sleep(Duration::from_millis(20));
                 }

@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Rust agent crate（src-tauri 另有自身 .gitignore）
+agent/target/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
