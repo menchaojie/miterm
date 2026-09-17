@@ -1,3 +1,4 @@
+mod agent_bridge;
 mod sftp_ops;
 
 use std::collections::HashMap;
@@ -29,6 +30,21 @@ pub struct ConnectParams {
     pub password: String,
     pub cols: u32,
     pub rows: u32,
+    /// 启用远端保活 agent（失败时回退经典 SSH PTY）
+    #[serde(default)]
+    pub persist_session: Option<bool>,
+    /// 重连时优先 attach 的 agent session id
+    #[serde(default)]
+    pub agent_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectResult {
+    pub session_id: String,
+    /// "agent" | "classic"
+    pub mode: String,
+    pub agent_session_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -69,7 +85,10 @@ enum IoCmd {
         rows: u32,
         reply: Sender<Result<(), String>>,
     },
-    Stop,
+    /// kill_pty：用户关 Tab 时为 true（杀远端 agent 会话）；网络断线路径不经过此命令
+    Stop {
+        kill_pty: bool,
+    },
 }
 
 struct ActiveSession {
@@ -78,6 +97,8 @@ struct ActiveSession {
     sftp: Arc<Mutex<Option<sftp_ops::SftpSideSession>>>,
     cmd_tx: Sender<IoCmd>,
     io_thread: JoinHandle<()>,
+    #[allow(dead_code)]
+    agent_session_id: Option<String>,
 }
 
 /// 读轮询超时（ms）：短超时以便穿插处理写/resize/keepalive。
@@ -192,6 +213,20 @@ fn with_op_timeout<T>(session: &Session, f: impl FnOnce() -> T) -> T {
     out
 }
 
+fn try_connect_via_agent(
+    app: &AppHandle,
+    sess: &Session,
+    cols: u32,
+    rows: u32,
+    prefer_id: Option<&str>,
+) -> Result<(Channel, agent_bridge::AgentHandshake), String> {
+    let ready = agent_bridge::ensure_remote_agent(app, sess)?;
+    let mut channel = agent_bridge::open_agent_tunnel(sess, &ready)?;
+    let handshake =
+        agent_bridge::agent_handshake(&mut channel, &ready, cols, rows, prefer_id)?;
+    Ok((channel, handshake))
+}
+
 /// 处理写/resize/停止。返回 `(should_stop, had_successful_io)`。
 fn drain_cmds(
     cmd_rx: &Receiver<IoCmd>,
@@ -216,13 +251,13 @@ fn drain_cmds(
                 }
                 let _ = reply.send(result);
             }
-            Ok(IoCmd::Stop) => {
+            Ok(IoCmd::Stop { .. }) => {
                 while let Ok(cmd) = cmd_rx.try_recv() {
                     match cmd {
                         IoCmd::Write { reply, .. } | IoCmd::Resize { reply, .. } => {
                             let _ = reply.send(Err("disconnected".into()));
                         }
-                        IoCmd::Stop => {}
+                        IoCmd::Stop { .. } => {}
                     }
                 }
                 let _ = channel.close();
@@ -330,7 +365,7 @@ fn run_session_io(
                 IoCmd::Write { reply, .. } | IoCmd::Resize { reply, .. } => {
                     let _ = reply.send(Err("disconnected".into()));
                 }
-                IoCmd::Stop => {}
+                IoCmd::Stop { .. } => {}
             }
         }
         let removed = sessions.lock().remove(&session_id);
@@ -354,12 +389,179 @@ fn run_session_io(
     }
 }
 
+fn drain_agent_cmds(
+    cmd_rx: &Receiver<IoCmd>,
+    session: &Session,
+    channel: &mut Channel,
+    agent_session_id: &str,
+) -> (bool, bool, bool) {
+    // returns (should_stop, had_ok, kill_pty)
+    let mut had_ok = false;
+    loop {
+        match cmd_rx.try_recv() {
+            Ok(IoCmd::Write { data, reply }) => {
+                let result =
+                    with_op_timeout(session, || agent_bridge::agent_send_input(channel, &data));
+                if result.is_ok() {
+                    had_ok = true;
+                }
+                let _ = reply.send(result);
+            }
+            Ok(IoCmd::Resize { cols, rows, reply }) => {
+                let result = with_op_timeout(session, || {
+                    agent_bridge::agent_send_resize(channel, cols, rows)
+                });
+                if result.is_ok() {
+                    had_ok = true;
+                }
+                let _ = reply.send(result);
+            }
+            Ok(IoCmd::Stop { kill_pty }) => {
+                while let Ok(cmd) = cmd_rx.try_recv() {
+                    match cmd {
+                        IoCmd::Write { reply, .. } | IoCmd::Resize { reply, .. } => {
+                            let _ = reply.send(Err("disconnected".into()));
+                        }
+                        IoCmd::Stop { .. } => {}
+                    }
+                }
+                if kill_pty {
+                    agent_bridge::agent_send_kill(channel, agent_session_id);
+                } else {
+                    agent_bridge::agent_send_detach(channel);
+                }
+                let _ = channel.close();
+                let _ = session.disconnect(None, "", None);
+                return (true, had_ok, kill_pty);
+            }
+            Err(mpsc::TryRecvError::Empty) => return (false, had_ok, false),
+            Err(mpsc::TryRecvError::Disconnected) => return (true, had_ok, false),
+        }
+    }
+}
+
+fn run_agent_session_io(
+    session: Session,
+    mut channel: Channel,
+    cmd_rx: Receiver<IoCmd>,
+    app: AppHandle,
+    session_id: String,
+    agent_session_id: String,
+    mut line_buf: Vec<u8>,
+    sessions: Arc<Mutex<HashMap<String, ActiveSession>>>,
+) {
+    session.set_blocking(true);
+    session.set_timeout(READ_POLL_TIMEOUT_MS);
+
+    let mut last_ka = Instant::now();
+    let mut ka_fail_streak: u32 = 0;
+    let mut read_warn_streak: u32 = 0;
+
+    let close_reason = 'io: {
+        loop {
+            let (stop, had_ok, _) =
+                drain_agent_cmds(&cmd_rx, &session, &mut channel, &agent_session_id);
+            if stop {
+                break 'io None;
+            }
+            if had_ok {
+                ka_fail_streak = 0;
+                read_warn_streak = 0;
+            }
+
+            if last_ka.elapsed() >= Duration::from_secs(KEEPALIVE_INTERVAL_SECS) {
+                let ka_result = with_op_timeout(&session, || session.keepalive_send());
+                last_ka = Instant::now();
+                match ka_result {
+                    Ok(_) => ka_fail_streak = 0,
+                    Err(e) => {
+                        ka_fail_streak = ka_fail_streak.saturating_add(1);
+                        if ka_fail_streak == 1 || ka_fail_streak % 8 == 0 {
+                            eprintln!(
+                                "[ssh/agent] keepalive ignored ({session_id}, n={ka_fail_streak}): {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            match agent_bridge::agent_try_read_message(&mut channel, &mut line_buf) {
+                Ok(Some(msg)) => {
+                    ka_fail_streak = 0;
+                    read_warn_streak = 0;
+                    if agent_bridge::message_is_session_closed(&msg, &agent_session_id) {
+                        eprintln!("[ssh/agent] remote pty closed ({session_id})");
+                        break 'io Some("remote");
+                    }
+                    if let Some(data) = agent_bridge::message_output_bytes(&msg) {
+                        let payload = SshOutputPayload {
+                            session_id: session_id.clone(),
+                            data,
+                        };
+                        if app.emit("ssh-output", payload).is_err() {
+                            eprintln!(
+                                "[ssh/agent] emit ssh-output failed ({session_id}), keep session"
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    let low = e.to_ascii_lowercase();
+                    if low.contains("eof") || low.contains("fatal") {
+                        eprintln!("[ssh/agent] tunnel dead ({session_id}): {e}");
+                        break 'io Some("error");
+                    }
+                    if low.contains("timed out") || low.contains("would block") {
+                        continue;
+                    }
+                    read_warn_streak = read_warn_streak.saturating_add(1);
+                    if read_warn_streak == 1 || read_warn_streak % 50 == 0 {
+                        eprintln!(
+                            "[ssh/agent] read kept ({session_id}, n={read_warn_streak}): {e}"
+                        );
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+    };
+
+    if let Some(reason) = close_reason {
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                IoCmd::Write { reply, .. } | IoCmd::Resize { reply, .. } => {
+                    let _ = reply.send(Err("disconnected".into()));
+                }
+                IoCmd::Stop { .. } => {}
+            }
+        }
+        let removed = sessions.lock().remove(&session_id);
+        if let Some(active) = removed {
+            {
+                let mut slot = active.sftp.lock();
+                *slot = None;
+            }
+            std::mem::forget(active.io_thread);
+            drop(active.cmd_tx);
+        }
+        let _ = channel.close();
+        let _ = app.emit(
+            "ssh-closed",
+            SshClosedPayload {
+                session_id,
+                reason,
+            },
+        );
+    }
+}
+
 fn teardown_session(active: ActiveSession) {
     {
         let mut slot = active.sftp.lock();
         *slot = None;
     }
-    let _ = active.cmd_tx.send(IoCmd::Stop);
+    let _ = active.cmd_tx.send(IoCmd::Stop { kill_pty: true });
     let _ = active.io_thread.join();
 }
 
@@ -393,7 +595,7 @@ impl SshSessionManager {
         }
     }
 
-    pub fn connect(&self, app: AppHandle, params: ConnectParams) -> Result<String, String> {
+    pub fn connect(&self, app: AppHandle, params: ConnectParams) -> Result<ConnectResult, String> {
         let session_id = params.session_id.trim().to_string();
         if session_id.is_empty() {
             return Err("sessionId is required".into());
@@ -411,7 +613,14 @@ impl SshSessionManager {
             password,
             cols,
             rows,
+            persist_session,
+            agent_session_id: prefer_agent_id,
         } = params;
+
+        let want_persist = persist_session.unwrap_or(true);
+        let prefer_agent_id = prefer_agent_id
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         let auth = SessionAuth {
             host: host.clone(),
@@ -439,7 +648,73 @@ impl SshSessionManager {
 
         // want_reply=false：不要求应答；间隔与 I/O 循环 KEEPALIVE_INTERVAL_SECS 一致
         sess.set_keepalive(false, KEEPALIVE_INTERVAL_SECS as u32);
+        sess.set_timeout(OP_TIMEOUT_MS);
 
+        let sftp = Arc::new(Mutex::new(None));
+        let sessions_map = Arc::clone(&self.sessions);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<IoCmd>();
+
+        // —— 尝试保活 agent ——
+        if want_persist {
+            match try_connect_via_agent(
+                &app,
+                &sess,
+                cols,
+                rows,
+                prefer_agent_id.as_deref(),
+            ) {
+                Ok((channel, handshake)) => {
+                    eprintln!(
+                        "[ssh] persist agent ok ({session_id} -> {})",
+                        handshake.agent_session_id
+                    );
+                    if !handshake.replay.is_empty() {
+                        let payload = SshOutputPayload {
+                            session_id: session_id.clone(),
+                            data: handshake.replay,
+                        };
+                        let _ = app.emit("ssh-output", payload);
+                    }
+                    let app_io = app.clone();
+                    let session_id_io = session_id.clone();
+                    let agent_id_io = handshake.agent_session_id.clone();
+                    let pending = handshake.pending;
+                    let io_thread = thread::spawn(move || {
+                        run_agent_session_io(
+                            sess,
+                            channel,
+                            cmd_rx,
+                            app_io,
+                            session_id_io,
+                            agent_id_io,
+                            pending,
+                            sessions_map,
+                        );
+                    });
+                    let agent_session_id = handshake.agent_session_id.clone();
+                    self.sessions.lock().insert(
+                        session_id.clone(),
+                        ActiveSession {
+                            auth,
+                            sftp,
+                            cmd_tx,
+                            io_thread,
+                            agent_session_id: Some(agent_session_id.clone()),
+                        },
+                    );
+                    return Ok(ConnectResult {
+                        session_id,
+                        mode: "agent".into(),
+                        agent_session_id: Some(agent_session_id),
+                    });
+                }
+                Err(e) => {
+                    eprintln!("[ssh] persist agent fallback to classic: {e}");
+                }
+            }
+        }
+
+        // —— 经典 SSH PTY ——
         let mut channel = sess
             .channel_session()
             .map_err(|e| format!("channel: {e}"))?;
@@ -451,10 +726,6 @@ impl SshSessionManager {
             r#"printf '\033]7;file://%s\007' "$PWD""#,
         );
         channel.shell().map_err(|e| format!("shell: {e}"))?;
-
-        let sftp = Arc::new(Mutex::new(None));
-        let sessions_map = Arc::clone(&self.sessions);
-        let (cmd_tx, cmd_rx) = mpsc::channel::<IoCmd>();
 
         let app_io = app.clone();
         let session_id_io = session_id.clone();
@@ -469,10 +740,15 @@ impl SshSessionManager {
                 sftp,
                 cmd_tx,
                 io_thread,
+                agent_session_id: None,
             },
         );
 
-        Ok(session_id)
+        Ok(ConnectResult {
+            session_id,
+            mode: "classic".into(),
+            agent_session_id: None,
+        })
     }
 
     pub fn write(&self, session_id: &str, data: Vec<u8>) -> Result<(), String> {

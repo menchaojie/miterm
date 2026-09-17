@@ -12,9 +12,9 @@ use db::{
 };
 use local::{LocalConnectParams, LocalSessionManager};
 use ssh::{
-    classify_local_paths, ClassifyLocalPathsResult, ConnectParams, SftpClassifyPathsParams,
-    SftpDownloadParams, SftpListParams, SftpListResult, SftpUploadParams, SftpUploadPathsParams,
-    SshSessionManager,
+    classify_local_paths, ClassifyLocalPathsResult, ConnectParams, ConnectResult,
+    SftpClassifyPathsParams, SftpDownloadParams, SftpListParams, SftpListResult, SftpUploadParams,
+    SftpUploadPathsParams, SshSessionManager,
 };
 use tauri::{AppHandle, Manager, State, Theme, image::Image};
 
@@ -131,7 +131,7 @@ async fn ssh_connect(
     app: AppHandle,
     state: State<'_, AppState>,
     params: ConnectParams,
-) -> Result<String, String> {
+) -> Result<ConnectResult, String> {
     let ssh = Arc::clone(&state.ssh);
     tokio::task::spawn_blocking(move || ssh.connect(app, params))
         .await

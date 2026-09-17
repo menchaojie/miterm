@@ -2184,6 +2184,7 @@ dependencies = [
 name = "miterm"
 version = "1.0.7"
 dependencies = [
+ "base64 0.22.1",
  "parking_lot",
  "portable-pty",
  "rfd",

@@ -57,6 +57,11 @@ export type AppSettings = {
   autoReconnect: boolean;
   /** 自动重连最大次数 */
   autoReconnectMaxAttempts: number;
+  /**
+   * SSH 会话保活：自动部署远端 miterm-agent，断线后重连可 attach 同一 PTY。
+   * 失败时自动回退普通 SSH shell。
+   */
+  sessionPersist: boolean;
   /** Ctrl/Cmd + 滚轮缩放终端字体 */
   ctrlWheelZoom: boolean;
   /** 终端字号（px），全局共用 */
@@ -236,6 +241,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   /** 默认关闭：对齐 Electerm/Xterminal「钝感」；避免误杀后刷 MOTD */
   autoReconnect: false,
   autoReconnectMaxAttempts: 5,
+  /** 默认开启：远端 agent 保活（无二进制或失败则回退经典 PTY） */
+  sessionPersist: true,
   ctrlWheelZoom: true,
   terminalFontSize: 14,
 };
@@ -416,6 +423,10 @@ export function loadSettings(): AppSettings {
       autoReconnectMaxAttempts: clampReconnectAttempts(
         parsed.autoReconnectMaxAttempts,
       ),
+      sessionPersist:
+        typeof parsed.sessionPersist === "boolean"
+          ? parsed.sessionPersist
+          : DEFAULT_SETTINGS.sessionPersist,
       ctrlWheelZoom:
         typeof parsed.ctrlWheelZoom === "boolean"
           ? parsed.ctrlWheelZoom

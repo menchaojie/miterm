@@ -159,7 +159,17 @@ function buildSessionTab(
   };
 }
 
-async function invokeConnect(item: SavedHost, sessionId: string) {
+type SshConnectResult = {
+  sessionId: string;
+  mode: string;
+  agentSessionId?: string | null;
+};
+
+async function invokeConnect(
+  item: SavedHost,
+  sessionId: string,
+  opts?: { agentSessionId?: string | null },
+): Promise<SshConnectResult | null> {
   if (isLocalHost(item)) {
     const shell = isLocalShellKind(item.shell) ? item.shell : "powershell";
     await invoke<string>("local_connect", {
@@ -171,19 +181,35 @@ async function invokeConnect(item: SavedHost, sessionId: string) {
         rows: DEFAULT_ROWS,
       },
     });
-  } else {
-    await invoke<string>("ssh_connect", {
-      params: {
-        sessionId,
-        host: item.host,
-        port: item.port,
-        username: item.username,
-        password: item.password,
-        cols: DEFAULT_COLS,
-        rows: DEFAULT_ROWS,
-      },
-    });
+    return null;
   }
+  const settings = loadSettings();
+  const result = await invoke<SshConnectResult>("ssh_connect", {
+    params: {
+      sessionId,
+      host: item.host,
+      port: item.port,
+      username: item.username,
+      password: item.password,
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS,
+      persistSession: settings.sessionPersist,
+      agentSessionId: opts?.agentSessionId ?? null,
+    },
+  });
+  return result;
+}
+
+function persistFieldsFromConnect(
+  result: SshConnectResult | null,
+): Pick<SessionTab, "agentSessionId" | "persistMode"> {
+  if (!result) {
+    return { agentSessionId: null, persistMode: null };
+  }
+  return {
+    agentSessionId: result.agentSessionId ?? null,
+    persistMode: result.mode === "agent" ? "agent" : "classic",
+  };
 }
 
 function App() {
@@ -483,7 +509,9 @@ function App() {
               errorMessage: "",
             });
             try {
-              await invokeConnect(host, sessionId);
+              const conn = await invokeConnect(host, sessionId, {
+                agentSessionId: tab.agentSessionId,
+              });
               if (cancelReconnectRef.current.has(sessionId)) {
                 try {
                   await invoke("ssh_disconnect", { sessionId });
@@ -495,13 +523,17 @@ function App() {
               updateTab(sessionId, {
                 status: "connected",
                 errorMessage: "",
+                ...persistFieldsFromConnect(conn),
               });
               try {
                 await invoke("touch_saved_host", { id: host.id });
               } catch (e) {
                 console.error(e);
               }
-              await restoreCwdAfterReconnect(sessionId, cwdToRestore);
+              // agent 模式会话仍在远端，不必软 cd；经典模式才恢复目录
+              if (conn?.mode !== "agent") {
+                await restoreCwdAfterReconnect(sessionId, cwdToRestore);
+              }
               return;
             } catch (e) {
               pushNotice(sessionId, `重连失败：${String(e)}`);
@@ -538,7 +570,9 @@ function App() {
       pushNotice(sessionId, "正在重连…");
       updateTab(sessionId, { status: "reconnecting", errorMessage: "" });
       try {
-        await invokeConnect(host, sessionId);
+        const conn = await invokeConnect(host, sessionId, {
+          agentSessionId: tab.agentSessionId,
+        });
         if (cancelReconnectRef.current.has(sessionId)) {
           try {
             await invoke("ssh_disconnect", { sessionId });
@@ -547,13 +581,19 @@ function App() {
           }
           return;
         }
-        updateTab(sessionId, { status: "connected", errorMessage: "" });
+        updateTab(sessionId, {
+          status: "connected",
+          errorMessage: "",
+          ...persistFieldsFromConnect(conn),
+        });
         try {
           await invoke("touch_saved_host", { id: host.id });
         } catch (e) {
           console.error(e);
         }
-        await restoreCwdAfterReconnect(sessionId, cwdToRestore);
+        if (conn?.mode !== "agent") {
+          await restoreCwdAfterReconnect(sessionId, cwdToRestore);
+        }
       } catch (e) {
         pushNotice(sessionId, `重连失败：${String(e)}`);
         updateTab(sessionId, {
@@ -732,8 +772,15 @@ function App() {
       setListError("");
 
       try {
-        await invokeConnect(item, sessionId);
-        updateTab(sessionId, { status: "connected", errorMessage: "" });
+        const conn = await invokeConnect(item, sessionId);
+        updateTab(sessionId, {
+          status: "connected",
+          errorMessage: "",
+          ...persistFieldsFromConnect(conn),
+        });
+        if (conn?.mode === "agent") {
+          pushNotice(sessionId, "已启用会话保活（远端 agent）");
+        }
         try {
           await invoke("touch_saved_host", { id: item.id });
           await refreshData();
@@ -747,7 +794,7 @@ function App() {
         });
       }
     },
-    [folders, refreshData, updateTab],
+    [folders, pushNotice, refreshData, updateTab],
   );
 
   /** 「+」：新建二级 Tab（单窗格），不拆当前分屏 */
@@ -787,8 +834,12 @@ function App() {
       setListError("");
 
       try {
-        await invokeConnect(item, sessionId);
-        updateTab(sessionId, { status: "connected", errorMessage: "" });
+        const conn = await invokeConnect(item, sessionId);
+        updateTab(sessionId, {
+          status: "connected",
+          errorMessage: "",
+          ...persistFieldsFromConnect(conn),
+        });
         try {
           await invoke("touch_saved_host", { id: item.id });
           await refreshData();
@@ -844,8 +895,12 @@ function App() {
       setListError("");
 
       try {
-        await invokeConnect(item, newId);
-        updateTab(newId, { status: "connected", errorMessage: "" });
+        const conn = await invokeConnect(item, newId);
+        updateTab(newId, {
+          status: "connected",
+          errorMessage: "",
+          ...persistFieldsFromConnect(conn),
+        });
         try {
           await invoke("touch_saved_host", { id: item.id });
           await refreshData();
@@ -909,8 +964,12 @@ function App() {
       await Promise.all(
         newIds.map(async (id) => {
           try {
-            await invokeConnect(item, id);
-            updateTab(id, { status: "connected", errorMessage: "" });
+            const conn = await invokeConnect(item, id);
+            updateTab(id, {
+              status: "connected",
+              errorMessage: "",
+              ...persistFieldsFromConnect(conn),
+            });
           } catch (e) {
             updateTab(id, {
               status: "error",
@@ -961,8 +1020,12 @@ function App() {
       await Promise.all(
         prepared.map(async ({ item, sessionId }) => {
           try {
-            await invokeConnect(item, sessionId);
-            updateTab(sessionId, { status: "connected", errorMessage: "" });
+            const conn = await invokeConnect(item, sessionId);
+            updateTab(sessionId, {
+              status: "connected",
+              errorMessage: "",
+              ...persistFieldsFromConnect(conn),
+            });
             try {
               await invoke("touch_saved_host", { id: item.id });
             } catch (e) {
@@ -1533,10 +1596,20 @@ function App() {
               const item = hostsById.get(tab.savedHostId!);
               if (!item) return;
               try {
-                await invokeConnect(item, tab.id);
-                updateTab(tab.id, { status: "connected", errorMessage: "" });
+                const conn = await invokeConnect(item, tab.id, {
+                  agentSessionId: tab.agentSessionId,
+                });
+                updateTab(tab.id, {
+                  status: "connected",
+                  errorMessage: "",
+                  ...persistFieldsFromConnect(conn),
+                });
                 const cwd = cwdBySession.get(tab.id);
-                if (tab.kind !== "local" && isRestorableCwd(cwd)) {
+                if (
+                  tab.kind !== "local" &&
+                  conn?.mode !== "agent" &&
+                  isRestorableCwd(cwd)
+                ) {
                   void restoreCwdAfterReconnect(tab.id, cwd);
                 }
               } catch (e) {
@@ -1581,9 +1654,19 @@ function App() {
         await Promise.all(
           prepared.map(async ({ item, sessionId, tab, cwd }) => {
             try {
-              await invokeConnect(item, sessionId);
-              updateTab(sessionId, { status: "connected", errorMessage: "" });
-              if (tab.kind !== "local" && isRestorableCwd(cwd)) {
+              const conn = await invokeConnect(item, sessionId, {
+                agentSessionId: tab.agentSessionId,
+              });
+              updateTab(sessionId, {
+                status: "connected",
+                errorMessage: "",
+                ...persistFieldsFromConnect(conn),
+              });
+              if (
+                tab.kind !== "local" &&
+                conn?.mode !== "agent" &&
+                isRestorableCwd(cwd)
+              ) {
                 void restoreCwdAfterReconnect(sessionId, cwd);
               }
             } catch (e) {

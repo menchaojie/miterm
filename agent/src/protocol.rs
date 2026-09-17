@@ -6,7 +6,7 @@ pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const READY_PREFIX: &str = "MITERM_AGENT_READY ";
 
 /// 进程启动后写到 stdout 的一行，供 SSH 启动脚本解析。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadyInfo {
     pub version: String,

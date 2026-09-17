@@ -50,7 +50,7 @@ pnpm tauri dev
 - xterm 终端 + 窗口 resize 同步 PTY
 - **SFTP**：侧栏「远程文件」浏览远程目录；上传支持菜单选文件/夹，或拖放到上传区确认后上传；支持整夹下载；传输中显示底部进度条，完成后该行「下载」左侧出现「已下载」可打开本机位置；本机文件已删时自动清标记；悬停可点 × 主动清除标记
 
-**保活 agent（进行中）**：独立 crate `agent/`（`miterm-agent`）可在远端握 PTY，断 SSH 后会话仍在；协议与手动部署见 [保活Agent.md](docs/保活Agent.md)。**尚未**接入 GUI 自动安装。
+**会话保活**：设置默认开启；SSH 连接时自动部署 `~/.miterm-agent`，经隧道接入；断线重连可 attach 同一 shell。失败回退普通 PTY。详见 [保活Agent.md](docs/保活Agent.md)。
 
 **暂不包含**：私钥、密码加密、Shadcn。
 

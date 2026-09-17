@@ -179,6 +179,25 @@ export function SettingsModal({
                 <label className="settings-check-row">
                   <input
                     type="checkbox"
+                    checked={draft.sessionPersist}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        sessionPersist: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>会话保活（远端 agent）</span>
+                </label>
+                <p className="settings-hint">
+                  开启后首次 SSH
+                  会自动把 miterm-agent 部署到服务器家目录并经隧道接入；网络闪断后重连可回到同一
+                  shell。关闭则使用普通 SSH
+                  PTY。部署失败时自动回退，不影响连接。
+                </p>
+                <label className="settings-check-row">
+                  <input
+                    type="checkbox"
                     checked={draft.autoReconnect}
                     onChange={(e) =>
                       setDraft((d) => ({

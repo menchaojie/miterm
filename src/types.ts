@@ -73,6 +73,10 @@ export interface SessionTab {
   systemNotice?: { seq: number; text: string } | null;
   /** 最近已知工作目录（OSC 7 / cd 跟踪），用于重连后恢复 */
   cwd?: string | null;
+  /** 远端保活 agent 会话 id；重连时优先 attach */
+  agentSessionId?: string | null;
+  /** agent=走保活；classic=普通 SSH PTY */
+  persistMode?: "agent" | "classic" | null;
 }
 
 /** 主机夹内的二级 Tab：一个 Tab 内可有多窗格分屏 */
