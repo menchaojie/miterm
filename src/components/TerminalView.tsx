@@ -30,6 +30,10 @@ interface TerminalViewProps {
   onReconnect?: () => void;
   /** 会话已退出 / 出错时关闭此窗格或连接 */
   onClose?: () => void;
+  /**
+   * 模拟断线（保留远端 agent 会话）。仅 SSH 保活模式传入。
+   */
+  onSimulateDrop?: () => void;
   onCwdChange?: (cwd: string | null) => void;
   homeHint?: string | null;
   initialCwd?: string | null;
@@ -49,6 +53,7 @@ export function TerminalView({
   systemNotice = null,
   onReconnect,
   onClose,
+  onSimulateDrop,
   onCwdChange,
   homeHint = null,
   initialCwd = null,
@@ -76,6 +81,7 @@ export function TerminalView({
   const showEndActions =
     (Boolean(onReconnect) || Boolean(onClose)) &&
     (status === "exited" || status === "error");
+  const showDropTest = interactive && Boolean(onSimulateDrop);
 
   return (
     <div className="terminal-view-wrap">
@@ -83,6 +89,17 @@ export function TerminalView({
         ref={containerRef}
         className={`terminal-container${interactive ? "" : " terminal-disabled"}`}
       />
+      {showDropTest ? (
+        <div className="terminal-drop-test-bar" title="只拆本机连接，不杀远端 agent 会话">
+          <button
+            type="button"
+            className="terminal-reconnect-btn terminal-drop-test-btn"
+            onClick={onSimulateDrop}
+          >
+            模拟断线（测保活）
+          </button>
+        </div>
+      ) : null}
       {showEndActions ? (
         <div className="terminal-reconnect-bar">
           <span className="terminal-reconnect-text">会话已断开</span>

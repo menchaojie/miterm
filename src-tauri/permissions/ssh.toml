@@ -7,6 +7,7 @@ commands.allow = [
   "ssh_write",
   "ssh_resize",
   "ssh_disconnect",
+  "ssh_drop_connection",
   "sftp_list",
   "sftp_upload",
   "sftp_upload_dir",

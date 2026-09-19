@@ -556,12 +556,12 @@ fn run_agent_session_io(
     }
 }
 
-fn teardown_session(active: ActiveSession) {
+fn teardown_session(active: ActiveSession, kill_pty: bool) {
     {
         let mut slot = active.sftp.lock();
         *slot = None;
     }
-    let _ = active.cmd_tx.send(IoCmd::Stop { kill_pty: true });
+    let _ = active.cmd_tx.send(IoCmd::Stop { kill_pty });
     let _ = active.io_thread.join();
 }
 
@@ -581,7 +581,8 @@ impl SshSessionManager {
         let had_session = active.is_some();
 
         if let Some(active) = active {
-            teardown_session(active);
+            // 关 Tab / 主动断开：杀掉远端 agent 会话
+            teardown_session(active, true);
         }
 
         if notify && had_session {
@@ -595,6 +596,23 @@ impl SshSessionManager {
         }
     }
 
+    /// 模拟网络断线：只拆本机 SSH/隧道，不 kill 远端 agent PTY（用于测保活）。
+    pub fn drop_connection(&self, app: &AppHandle, session_id: &str) -> Result<(), String> {
+        let active = self.sessions.lock().remove(session_id);
+        let Some(active) = active else {
+            return Err("not connected".into());
+        };
+        teardown_session(active, false);
+        let _ = app.emit(
+            "ssh-closed",
+            SshClosedPayload {
+                session_id: session_id.to_string(),
+                reason: "error",
+            },
+        );
+        Ok(())
+    }
+
     pub fn connect(&self, app: AppHandle, params: ConnectParams) -> Result<ConnectResult, String> {
         let session_id = params.session_id.trim().to_string();
         if session_id.is_empty() {
@@ -602,7 +620,7 @@ impl SshSessionManager {
         }
 
         if let Some(old) = self.sessions.lock().remove(&session_id) {
-            teardown_session(old);
+            teardown_session(old, true);
         }
 
         let ConnectParams {

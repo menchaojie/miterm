@@ -72,6 +72,8 @@ interface TerminalWorkspaceProps {
   onQuadSplitSession: (sessionId: string) => void;
   onSplitRatioChange: (splitId: string, ratio: number) => void;
   onReconnectSession?: (sessionId: string) => void;
+  /** 模拟断线测保活（仅 agent 会话） */
+  onSimulateDropSession?: (sessionId: string) => void;
   onCwdChange?: (sessionId: string, cwd: string | null) => void;
   onSyncControlChange?: (control: ConcurrentSyncControl | null) => void;
   /** 终端字号（px） */
@@ -373,6 +375,7 @@ export function TerminalWorkspace({
   onQuadSplitSession,
   onSplitRatioChange,
   onReconnectSession,
+  onSimulateDropSession,
   onCwdChange,
   onSyncControlChange,
   fontSize = 14,
@@ -694,6 +697,13 @@ export function TerminalWorkspace({
               onReconnect={
                 onReconnectSession
                   ? () => onReconnectSession(tab.id)
+                  : undefined
+              }
+              onSimulateDrop={
+                onSimulateDropSession &&
+                tab.kind !== "local" &&
+                tab.persistMode === "agent"
+                  ? () => onSimulateDropSession(tab.id)
                   : undefined
               }
               onClose={() => onCloseSession(tab.id)}

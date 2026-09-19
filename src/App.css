@@ -2641,6 +2641,24 @@ body.split-sash-dragging .split-sash-horizontal {
   min-height: 0;
 }
 
+.terminal-drop-test-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.terminal-drop-test-bar:hover {
+  opacity: 1;
+}
+
+.terminal-drop-test-btn {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
 .terminal-reconnect-bar {
   flex-shrink: 0;
   display: flex;

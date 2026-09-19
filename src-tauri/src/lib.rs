@@ -214,6 +214,19 @@ async fn ssh_disconnect(
     Ok(())
 }
 
+/// 模拟断线：保留远端 agent 会话，供「重新连接」测试保活。
+#[tauri::command]
+async fn ssh_drop_connection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let ssh = Arc::clone(&state.ssh);
+    tokio::task::spawn_blocking(move || ssh.drop_connection(&app, &session_id))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
 #[tauri::command]
 async fn sftp_list(
     state: State<'_, AppState>,
@@ -576,6 +589,7 @@ pub fn run() {
             ssh_write,
             ssh_resize,
             ssh_disconnect,
+            ssh_drop_connection,
             sftp_list,
             sftp_upload,
             sftp_upload_dir,

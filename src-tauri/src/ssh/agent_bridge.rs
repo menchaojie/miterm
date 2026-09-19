@@ -11,7 +11,7 @@ use ssh2::Session;
 use tauri::{AppHandle, Manager};
 
 /// 与 **已打包** 的 `resources/miterm-agent/*` 对齐（源码 agent 可能更新，需重建 Linux 产物后再抬版本）。
-pub const AGENT_VERSION: &str = "0.1.0";
+pub const AGENT_VERSION: &str = "0.1.1";
 const READY_PREFIX: &str = "MITERM_AGENT_READY ";
 const REMOTE_DIR: &str = ".miterm-agent";
 const REMOTE_BIN: &str = "miterm-agent";

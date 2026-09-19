@@ -52,6 +52,7 @@ interface ConcurrentWorkspaceProps {
   onFocusSession: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
   onReconnectSession?: (sessionId: string) => void;
+  onSimulateDropSession?: (sessionId: string) => void;
   onCwdChange?: (sessionId: string, cwd: string | null) => void;
   /** 向 Tab 栏上报全选/取消控制（离开时传 null） */
   onSyncControlChange?: (control: ConcurrentSyncControl | null) => void;
@@ -126,6 +127,7 @@ export function ConcurrentWorkspace({
   onFocusSession,
   onCloseSession,
   onReconnectSession,
+  onSimulateDropSession,
   onCwdChange,
   onSyncControlChange,
   fontSize = 14,
@@ -544,6 +546,13 @@ export function ConcurrentWorkspace({
                     onReconnect={
                       onReconnectSession
                         ? () => onReconnectSession(tab.id)
+                        : undefined
+                    }
+                    onSimulateDrop={
+                      onSimulateDropSession &&
+                      tab.kind !== "local" &&
+                      tab.persistMode === "agent"
+                        ? () => onSimulateDropSession(tab.id)
                         : undefined
                     }
                     onClose={() => onCloseSession(tab.id)}

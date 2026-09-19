@@ -637,11 +637,15 @@ function App() {
         return;
       }
 
-      // abnormal
+      // abnormal / 模拟断线：保留 agentSessionId
       if (!settingsRef.current.autoReconnect) {
+        const keepHint =
+          tab.persistMode === "agent" && tab.agentSessionId
+            ? "\n（若为模拟断线，远端会话应仍保留，可点重新连接测保活。）"
+            : "";
         pushNotice(
           sessionId,
-          "连接已断开。\n自动重连已关闭，可点击「重新连接」。",
+          `连接已断开。\n自动重连已关闭，可点击「重新连接」。${keepHint}`,
         );
         updateTab(sessionId, { status: "exited", errorMessage: "" });
         return;
@@ -650,6 +654,28 @@ function App() {
       void reconnectSession(sessionId, "auto");
     },
     [pushNotice, reconnectSession, updateTab],
+  );
+
+  const simulateDropSession = useCallback(
+    async (sessionId: string) => {
+      const tab = sessionTabsRef.current.find((t) => t.id === sessionId);
+      if (!tab || tab.status !== "connected") return;
+      if (tab.persistMode !== "agent") {
+        pushNotice(sessionId, "当前不是保活 agent 会话，模拟断线无意义。");
+        return;
+      }
+      pushNotice(
+        sessionId,
+        "正在模拟断线（不杀远端 PTY）…",
+      );
+      try {
+        await invoke("ssh_drop_connection", { sessionId });
+        // ssh-closed(error) 会走 onSessionClosed；此处再补一句
+      } catch (e) {
+        pushNotice(sessionId, `模拟断线失败：${String(e)}`);
+      }
+    },
+    [pushNotice],
   );
 
   const detachSessionFromGroups = useCallback((sessionId: string) => {
@@ -2129,6 +2155,9 @@ function App() {
                   onReconnectSession={(sessionId) => {
                     void reconnectSession(sessionId, "manual");
                   }}
+                  onSimulateDropSession={(sessionId) => {
+                    void simulateDropSession(sessionId);
+                  }}
                   onCwdChange={handleCwdChange}
                   onSyncControlChange={
                     visible ? handleSyncControlChange : undefined
@@ -2200,6 +2229,9 @@ function App() {
                   onCloseSession={closeSession}
                   onReconnectSession={(sessionId) => {
                     void reconnectSession(sessionId, "manual");
+                  }}
+                  onSimulateDropSession={(sessionId) => {
+                    void simulateDropSession(sessionId);
                   }}
                   onCwdChange={handleCwdChange}
                   onAddSession={() => {
