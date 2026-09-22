@@ -42,6 +42,7 @@ miterm (Windows)
 
 - **关 Tab**：向 agent 发 `kill`，结束该 PTY。  
 - **网络闪断**：不发 kill；重连时带上 `agentSessionId` 再 `attach`，回放 ring（约 256KB）。  
+- **分屏**：每个窗格一个 agent session；**0.1.2+** 按 session_id 多路推送输出（此前全局单槽会导致只活最后一格）。  
 - **失败回退**：无对应 arch 二进制、上传失败、ensure 失败 → 经典 `request_pty` + shell。
 
 ---
@@ -51,8 +52,11 @@ miterm (Windows)
 1. 设置 → 连接 → **会话保活（远端 agent）**（默认开）。  
 2. 正常连 SSH。首次可能稍慢（上传约 1MB）。  
 3. 成功时终端系统提示：「已启用会话保活（远端 agent）」。  
-4. **测保活**：终端右上角 **「模拟断线（测保活）」** → 再点「重新连接」。不要 `exit`、不要关 Tab。成功时不应出现「已恢复工作目录」。  
-5. 关闭保活：取消勾选后新连接走经典 PTY。
+4. **测保活**：设置打开 **「显示模拟断线调试按钮」** → 终端右上角点按钮 → 再「重新连接」。不要 `exit`、不要关 Tab。  
+5. 验收：后端日志 agent UUID 不变；`clear` 后 `pwd` 仍在断线前目录（回放可能含历史提示符，勿仅凭画面判断）。  
+6. 关闭保活：取消勾选后新连接走经典 PTY。
+
+**版本升级**：客户端发现远端版本不一致时，上传到 `miterm-agent.new`，按 pid/`pkill -x miterm-agent` 停旧进程后再 `mv` 替换并重启（会丢掉旧 PTY，属预期）。勿用 `pkill -f` 匹配完整路径，以免误杀安装脚本。
 
 远端目录：`~/.miterm-agent/`（`miterm-agent`、`agent.log`、`ready.json`、`agent.pid`）。
 
@@ -87,11 +91,16 @@ miterm/
 ./scripts/build-agent.sh musl aarch64   # ARM
 ```
 
-同步进客户端资源（本机构建 Tauri 时 `build.rs` 也会尝试从 `agent/dist` 拷贝）：
+同步进客户端（**必须先更新 `agent/dist`**，否则 `build.rs` 会用旧文件盖掉 resources）：
 
 ```powershell
+# 1) 源头（防 build.rs 回滚）
+Copy-Item -Force <linux产物> agent\dist\miterm-agent-linux-x86_64
+# 2) 打包资源
 Copy-Item -Force agent\dist\miterm-agent-linux-x86_64 src-tauri\resources\miterm-agent\
-# 若源码版本升高，同步改 agent_bridge.rs 的 AGENT_VERSION
+# 3) 与二进制版本对齐
+#    agent/Cargo.toml version  ==  src-tauri/.../agent_bridge.rs AGENT_VERSION
+# 4) 重启 pnpm tauri dev（或同步拷到 target\debug\resources\miterm-agent\）
 ```
 
 Windows 本机只能编 Windows 版做协议冒烟：`scripts/build-agent.ps1` + `scripts/agent-smoke.ps1`。

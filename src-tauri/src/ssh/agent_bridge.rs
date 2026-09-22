@@ -11,7 +11,7 @@ use ssh2::Session;
 use tauri::{AppHandle, Manager};
 
 /// 与 **已打包** 的 `resources/miterm-agent/*` 对齐（源码 agent 可能更新，需重建 Linux 产物后再抬版本）。
-pub const AGENT_VERSION: &str = "0.1.1";
+pub const AGENT_VERSION: &str = "0.1.2";
 const READY_PREFIX: &str = "MITERM_AGENT_READY ";
 const REMOTE_DIR: &str = ".miterm-agent";
 const REMOTE_BIN: &str = "miterm-agent";
@@ -125,6 +125,8 @@ fn remote_version(sess: &Session) -> Option<String> {
     out.split_whitespace().nth(1).map(|s| s.trim().to_string())
 }
 
+/// 上传到 `miterm-agent.new`，停旧进程后再 `mv` 替换，避免覆盖正在运行的二进制失败。
+/// 注意：停旧 agent 会丢掉其下所有保活 PTY（版本升级预期行为）。
 fn upload_agent(sess: &Session, local: &Path) -> Result<(), String> {
     let data = fs::read(local).map_err(|e| format!("read agent binary: {e}"))?;
     let sftp = sess.sftp().map_err(|e| format!("sftp: {e}"))?;
@@ -138,14 +140,13 @@ fn upload_agent(sess: &Session, local: &Path) -> Result<(), String> {
     };
     let dir = format!("{home}/{REMOTE_DIR}");
     let bin = format!("{dir}/{REMOTE_BIN}");
-    // mkdir
+    let bin_new = format!("{dir}/{REMOTE_BIN}.new");
+
     match sftp.mkdir(Path::new(&dir), 0o755) {
         Ok(()) => {}
         Err(e) => {
-            // 已存在可忽略
             let msg = e.to_string().to_ascii_lowercase();
-            if !msg.contains("exists") && !msg.contains("failure") {
-                // libssh2 对 EEXIST 文案不一，再试 stat
+            if !msg.contains("exists") {
                 if sftp.stat(Path::new(&dir)).is_err() {
                     return Err(format!("mkdir {dir}: {e}"));
                 }
@@ -153,17 +154,45 @@ fn upload_agent(sess: &Session, local: &Path) -> Result<(), String> {
         }
     }
 
+    // 先写临时文件（不碰正在执行的 inode）
+    let _ = sftp.unlink(Path::new(&bin_new));
     let mut remote = sftp
-        .create(Path::new(&bin))
-        .map_err(|e| format!("sftp create {bin}: {e}"))?;
+        .create(Path::new(&bin_new))
+        .map_err(|e| format!("sftp create {bin_new}: {e}"))?;
     remote
         .write_all(&data)
         .map_err(|e| format!("sftp write: {e}"))?;
     drop(remote);
 
-    let (code, _, err) = ssh_exec(sess, &format!("chmod 755 '{bin}'"))?;
+    let replace_cmd = format!(
+        r#"
+set -e
+DIR="{dir}"
+BIN="{bin}"
+NEW="{bin_new}"
+chmod 755 "$NEW"
+# 停旧实例：只用 pid 文件 / 进程名，禁止 pkill -f "$BIN"（会误杀本脚本）
+if [ -f "$DIR/agent.pid" ]; then
+  kill "$(cat "$DIR/agent.pid")" 2>/dev/null || true
+fi
+if [ -f "$DIR/ready.json" ]; then
+  pid=$(sed -n 's/.*"pid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$DIR/ready.json" | head -n1)
+  if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi
+fi
+pkill -x miterm-agent 2>/dev/null || true
+sleep 0.3
+mv -f "$NEW" "$BIN"
+chmod 755 "$BIN"
+rm -f "$DIR/ready.json"
+"#
+    );
+    let (code, out, err) = ssh_exec(sess, &replace_cmd)?;
     if code != 0 {
-        return Err(format!("chmod failed: {err}"));
+        return Err(format!(
+            "replace agent binary failed ({code}): {}\n{}",
+            err.trim(),
+            out.trim()
+        ));
     }
     Ok(())
 }
@@ -208,49 +237,73 @@ pub fn ensure_remote_agent(app: &AppHandle, sess: &Session) -> Result<AgentReady
         None => true,
     };
     if need_upload {
-        eprintln!("[agent] uploading {} -> ~/{}", local.display(), REMOTE_DIR);
+        eprintln!(
+            "[agent] uploading {} -> ~/{} (safe replace)",
+            local.display(),
+            REMOTE_DIR
+        );
         upload_agent(sess, &local)?;
     }
 
-    // ensure：兼容 0.1.0（无 --probe）与更新版
+    // FORCE_RESTART=1：刚升级过，禁止复用旧进程
+    // 否则可 probe；若 probe 失败且仍有残留进程，先停再建，避免双实例
+    let force = if need_upload { "1" } else { "0" };
     let ensure_cmd = format!(
         r#"
 set -e
 DIR="$HOME/{REMOTE_DIR}"
 BIN="$DIR/{REMOTE_BIN}"
+FORCE_RESTART={force}
 mkdir -p "$DIR"
 if [ ! -x "$BIN" ]; then
   echo "agent binary missing" >&2
   exit 1
 fi
-if OUT=$("$BIN" --state-dir "$DIR" --probe 2>/dev/null); then
-  echo "$OUT" | head -n 1
-  exit 0
-fi
-if [ -f "$DIR/ready.json" ]; then
-  pid=$(sed -n 's/.*"pid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$DIR/ready.json" | head -n1)
-  if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-    echo "{READY_PREFIX}$(cat "$DIR/ready.json")"
+
+stop_agent() {{
+  if [ -f "$DIR/agent.pid" ]; then
+    kill "$(cat "$DIR/agent.pid")" 2>/dev/null || true
+  fi
+  if [ -f "$DIR/ready.json" ]; then
+    pid=$(sed -n 's/.*"pid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$DIR/ready.json" | head -n1)
+    if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi
+  fi
+  # -x 按进程名，避免 pkill -f "$BIN" 误杀当前 ensure 脚本
+  pkill -x miterm-agent 2>/dev/null || true
+  rm -f "$DIR/ready.json"
+  sleep 0.2
+}}
+
+if [ "$FORCE_RESTART" != "1" ]; then
+  if OUT=$("$BIN" --state-dir "$DIR" --probe 2>/dev/null); then
+    echo "$OUT" | head -n 1
     exit 0
   fi
-fi
-# 若已有进程且日志里有 READY，复用（0.1.0）
-if [ -f "$DIR/agent.pid" ]; then
-  opid=$(cat "$DIR/agent.pid" 2>/dev/null || true)
-  if [ -n "$opid" ] && [ -d "/proc/$opid" ]; then
-    if line=$(grep -m1 '^{READY_PREFIX}' "$DIR/agent.log" 2>/dev/null); then
-      echo "$line"
+  if [ -f "$DIR/ready.json" ]; then
+    pid=$(sed -n 's/.*"pid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$DIR/ready.json" | head -n1)
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+      echo "{READY_PREFIX}$(cat "$DIR/ready.json")"
       exit 0
     fi
   fi
+  if [ -f "$DIR/agent.pid" ]; then
+    opid=$(cat "$DIR/agent.pid" 2>/dev/null || true)
+    if [ -n "$opid" ] && [ -d "/proc/$opid" ]; then
+      if line=$(grep -m1 '^{READY_PREFIX}' "$DIR/agent.log" 2>/dev/null); then
+        echo "$line"
+        exit 0
+      fi
+    fi
+  fi
 fi
-rm -f "$DIR/ready.json"
+
+# 拉起前一律停干净，禁止双开
+stop_agent
 : > "$DIR/agent.log"
-# 优先带 state-dir；失败则无参启动
 nohup "$BIN" --state-dir "$DIR" >"$DIR/agent.log" 2>&1 </dev/null &
 echo $! >"$DIR/agent.pid"
 sleep 0.25
-if ! grep -q '^{READY_PREFIX}' "$DIR/agent.log" 2>/dev/null; then
+if ! grep -q '^{READY_PREFIX}' "$DIR/agent.log" 2>/dev/null && [ ! -f "$DIR/ready.json" ]; then
   if [ -f "$DIR/agent.pid" ]; then kill "$(cat "$DIR/agent.pid")" 2>/dev/null || true; fi
   : > "$DIR/agent.log"
   nohup "$BIN" >"$DIR/agent.log" 2>&1 </dev/null &
@@ -263,7 +316,6 @@ for i in $(seq 1 50); do
   fi
   if line=$(grep -m1 '^{READY_PREFIX}' "$DIR/agent.log" 2>/dev/null); then
     echo "$line"
-    # 落盘便于下次复用
     echo "$line" | sed 's/^{READY_PREFIX}//' > "$DIR/ready.json" || true
     exit 0
   fi

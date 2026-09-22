@@ -1,6 +1,6 @@
 [package]
 name = "miterm-agent"
-version = "0.1.1"
+version = "0.1.2"
 description = "miterm remote session keep-alive agent (PTY broker on 127.0.0.1)"
 edition = "2021"
 license = "MIT"

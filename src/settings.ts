@@ -62,6 +62,8 @@ export type AppSettings = {
    * 失败时自动回退普通 SSH shell。
    */
   sessionPersist: boolean;
+  /** 显示「模拟断线」调试按钮（仅保活会话） */
+  showPersistDebug: boolean;
   /** Ctrl/Cmd + 滚轮缩放终端字体 */
   ctrlWheelZoom: boolean;
   /** 终端字号（px），全局共用 */
@@ -243,6 +245,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoReconnectMaxAttempts: 5,
   /** 默认开启：远端 agent 保活（无二进制或失败则回退经典 PTY） */
   sessionPersist: true,
+  showPersistDebug: false,
   ctrlWheelZoom: true,
   terminalFontSize: 14,
 };
@@ -427,6 +430,10 @@ export function loadSettings(): AppSettings {
         typeof parsed.sessionPersist === "boolean"
           ? parsed.sessionPersist
           : DEFAULT_SETTINGS.sessionPersist,
+      showPersistDebug:
+        typeof parsed.showPersistDebug === "boolean"
+          ? parsed.showPersistDebug
+          : DEFAULT_SETTINGS.showPersistDebug,
       ctrlWheelZoom:
         typeof parsed.ctrlWheelZoom === "boolean"
           ? parsed.ctrlWheelZoom

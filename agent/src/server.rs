@@ -1,5 +1,6 @@
-//! TCP 服务：每连接一线程；客户端断开只 detach，不杀 PTY。
+//! TCP 服务：每连接一线程；多 session 可同时 attach（按 session_id 路由输出）。
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,53 +15,51 @@ use crate::protocol::{decode_b64, encode_b64, ClientMsg, ServerMsg};
 use crate::session::{PtyEvent, SessionManager};
 
 struct ActiveAttach {
-    session_id: String,
     writer: Mutex<TcpStream>,
 }
+
+type AttachMap = HashMap<String, Arc<ActiveAttach>>;
 
 pub struct AgentServer {
     token: String,
     sessions: Arc<SessionManager>,
-    active: Arc<Mutex<Option<Arc<ActiveAttach>>>>,
+    /// session_id → 当前 attach 的 TCP 写出端（多分屏并行）
+    attaches: Arc<Mutex<AttachMap>>,
     running: Arc<AtomicBool>,
 }
 
 impl AgentServer {
     pub fn new(token: String, sessions: Arc<SessionManager>, events: Receiver<PtyEvent>) -> Self {
-        let active: Arc<Mutex<Option<Arc<ActiveAttach>>>> = Arc::new(Mutex::new(None));
+        let attaches: Arc<Mutex<AttachMap>> = Arc::new(Mutex::new(HashMap::new()));
         let running = Arc::new(AtomicBool::new(true));
 
         let sessions_ev = Arc::clone(&sessions);
-        let active_ev = Arc::clone(&active);
+        let attaches_ev = Arc::clone(&attaches);
         let running_ev = Arc::clone(&running);
         thread::spawn(move || {
             while running_ev.load(Ordering::SeqCst) {
                 match events.recv_timeout(Duration::from_millis(500)) {
                     Ok(PtyEvent::Output { session_id, data }) => {
                         sessions_ev.on_output(&session_id, &data);
-                        let attach = active_ev.lock().clone();
-                        if let Some(a) = attach {
-                            if a.session_id == session_id {
-                                let msg = ServerMsg::Output {
-                                    data: encode_b64(&data),
-                                };
-                                let _ = send_line(&a.writer, &msg);
-                            }
+                        let target = attaches_ev.lock().get(&session_id).cloned();
+                        if let Some(a) = target {
+                            let msg = ServerMsg::Output {
+                                data: encode_b64(&data),
+                            };
+                            let _ = send_line(&a.writer, &msg);
                         }
                     }
                     Ok(PtyEvent::Exited { session_id }) => {
                         sessions_ev.mark_exited(&session_id);
-                        let attach = active_ev.lock().clone();
-                        if let Some(a) = attach {
-                            if a.session_id == session_id {
-                                let msg = ServerMsg::Closed {
-                                    session_id: session_id.clone(),
-                                    reason: "exited".into(),
-                                };
-                                let _ = send_line(&a.writer, &msg);
-                                clear_active_if(&active_ev, &session_id);
-                            }
+                        let target = attaches_ev.lock().get(&session_id).cloned();
+                        if let Some(a) = target {
+                            let msg = ServerMsg::Closed {
+                                session_id: session_id.clone(),
+                                reason: "exited".into(),
+                            };
+                            let _ = send_line(&a.writer, &msg);
                         }
+                        clear_attach(&attaches_ev, &session_id);
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -71,7 +70,7 @@ impl AgentServer {
         Self {
             token,
             sessions,
-            active,
+            attaches,
             running,
         }
     }
@@ -191,16 +190,18 @@ impl AgentServer {
                 ClientMsg::Attach { session_id } => {
                     if let Some(old) = attached.take() {
                         self.sessions.detach(&old);
-                        clear_active_if(&self.active, &old);
+                        clear_attach(&self.attaches, &old);
                     }
                     match self.sessions.attach(&session_id) {
                         Ok((replay, cols, rows)) => {
                             attached = Some(session_id.clone());
                             if let Ok(w) = writer.lock().try_clone() {
-                                *self.active.lock() = Some(Arc::new(ActiveAttach {
-                                    session_id: session_id.clone(),
-                                    writer: Mutex::new(w),
-                                }));
+                                self.attaches.lock().insert(
+                                    session_id.clone(),
+                                    Arc::new(ActiveAttach {
+                                        writer: Mutex::new(w),
+                                    }),
+                                );
                             }
                             let _ = send_line(
                                 &writer,
@@ -220,7 +221,7 @@ impl AgentServer {
                 ClientMsg::Detach => {
                     if let Some(id) = attached.take() {
                         self.sessions.detach(&id);
-                        clear_active_if(&self.active, &id);
+                        clear_attach(&self.attaches, &id);
                         let _ = send_line(&writer, &ServerMsg::Detached { session_id: id });
                     } else {
                         let _ = send_line(
@@ -274,7 +275,7 @@ impl AgentServer {
                 ClientMsg::Kill { session_id } => {
                     if attached.as_deref() == Some(session_id.as_str()) {
                         attached = None;
-                        clear_active_if(&self.active, &session_id);
+                        clear_attach(&self.attaches, &session_id);
                     }
                     match self.sessions.kill(&session_id) {
                         Ok(()) => {
@@ -296,7 +297,7 @@ impl AgentServer {
 
         if let Some(id) = attached.take() {
             self.sessions.detach(&id);
-            clear_active_if(&self.active, &id);
+            clear_attach(&self.attaches, &id);
         }
         {
             let w = writer.lock();
@@ -305,11 +306,8 @@ impl AgentServer {
     }
 }
 
-fn clear_active_if(active: &Mutex<Option<Arc<ActiveAttach>>>, session_id: &str) {
-    let mut g = active.lock();
-    if g.as_ref().map(|a| a.session_id.as_str()) == Some(session_id) {
-        *g = None;
-    }
+fn clear_attach(attaches: &Mutex<AttachMap>, session_id: &str) {
+    attaches.lock().remove(session_id);
 }
 
 fn send_line(writer: &Mutex<TcpStream>, msg: &ServerMsg) -> Result<(), String> {

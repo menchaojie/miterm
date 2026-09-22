@@ -198,6 +198,24 @@ export function SettingsModal({
                 <label className="settings-check-row">
                   <input
                     type="checkbox"
+                    checked={draft.showPersistDebug}
+                    disabled={!draft.sessionPersist}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        showPersistDebug: e.target.checked,
+                      }))
+                    }
+                  />
+                  <span>显示「模拟断线」调试按钮</span>
+                </label>
+                <p className="settings-hint">
+                  仅用于测试保活：只拆本机连接、不杀远端
+                  PTY。正式使用请保持关闭。
+                </p>
+                <label className="settings-check-row">
+                  <input
+                    type="checkbox"
                     checked={draft.autoReconnect}
                     onChange={(e) =>
                       setDraft((d) => ({

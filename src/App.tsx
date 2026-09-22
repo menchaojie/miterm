@@ -531,7 +531,14 @@ function App() {
                 console.error(e);
               }
               // agent 模式会话仍在远端，不必软 cd；经典模式才恢复目录
-              if (conn?.mode !== "agent") {
+              if (conn?.mode === "agent") {
+                pushNotice(
+                  sessionId,
+                  tab.agentSessionId
+                    ? "已恢复远端会话（屏幕可能含断线前输出回放；可用 clear 再 pwd 确认）。"
+                    : "已启用会话保活（远端 agent）。",
+                );
+              } else {
                 await restoreCwdAfterReconnect(sessionId, cwdToRestore);
               }
               return;
@@ -591,7 +598,14 @@ function App() {
         } catch (e) {
           console.error(e);
         }
-        if (conn?.mode !== "agent") {
+        if (conn?.mode === "agent") {
+          pushNotice(
+            sessionId,
+            tab.agentSessionId
+              ? "已恢复远端会话（屏幕可能含断线前输出回放；可用 clear 再 pwd 确认）。"
+              : "已启用会话保活（远端 agent）。",
+          );
+        } else {
           await restoreCwdAfterReconnect(sessionId, cwdToRestore);
         }
       } catch (e) {
@@ -2155,9 +2169,13 @@ function App() {
                   onReconnectSession={(sessionId) => {
                     void reconnectSession(sessionId, "manual");
                   }}
-                  onSimulateDropSession={(sessionId) => {
-                    void simulateDropSession(sessionId);
-                  }}
+                  onSimulateDropSession={
+                    settings.showPersistDebug
+                      ? (sessionId) => {
+                          void simulateDropSession(sessionId);
+                        }
+                      : undefined
+                  }
                   onCwdChange={handleCwdChange}
                   onSyncControlChange={
                     visible ? handleSyncControlChange : undefined
@@ -2230,9 +2248,13 @@ function App() {
                   onReconnectSession={(sessionId) => {
                     void reconnectSession(sessionId, "manual");
                   }}
-                  onSimulateDropSession={(sessionId) => {
-                    void simulateDropSession(sessionId);
-                  }}
+                  onSimulateDropSession={
+                    settings.showPersistDebug
+                      ? (sessionId) => {
+                          void simulateDropSession(sessionId);
+                        }
+                      : undefined
+                  }
                   onCwdChange={handleCwdChange}
                   onAddSession={() => {
                     void addSessionToFolder(folder.id);
