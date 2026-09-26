@@ -2182,7 +2182,7 @@ dependencies = [
 
 [[package]]
 name = "miterm"
-version = "1.0.7"
+version = "1.0.9"
 dependencies = [
  "base64 0.22.1",
  "parking_lot",
