@@ -163,6 +163,8 @@ type SshConnectResult = {
   sessionId: string;
   mode: string;
   agentSessionId?: string | null;
+  /** 是否 attach 到已有远端 agent 会话（未新建 PTY） */
+  reattached?: boolean;
 };
 
 async function invokeConnect(
@@ -530,15 +532,16 @@ function App() {
               } catch (e) {
                 console.error(e);
               }
-              // agent 模式会话仍在远端，不必软 cd；经典模式才恢复目录
-              if (conn?.mode === "agent") {
+              // 仅真 attach 到已有远端会话时跳过 soft cd；新建 PTY 仍需恢复目录
+              if (conn?.mode === "agent" && conn.reattached) {
                 pushNotice(
                   sessionId,
-                  tab.agentSessionId
-                    ? "已恢复远端会话（屏幕可能含断线前输出回放；可用 clear 再 pwd 确认）。"
-                    : "已启用会话保活（远端 agent）。",
+                  "已恢复远端会话（屏幕可能含断线前输出回放；可用 clear 再 pwd 确认）。",
                 );
               } else {
+                if (conn?.mode === "agent") {
+                  pushNotice(sessionId, "已启用会话保活（远端 agent）。");
+                }
                 await restoreCwdAfterReconnect(sessionId, cwdToRestore);
               }
               return;
@@ -598,14 +601,15 @@ function App() {
         } catch (e) {
           console.error(e);
         }
-        if (conn?.mode === "agent") {
+        if (conn?.mode === "agent" && conn.reattached) {
           pushNotice(
             sessionId,
-            tab.agentSessionId
-              ? "已恢复远端会话（屏幕可能含断线前输出回放；可用 clear 再 pwd 确认）。"
-              : "已启用会话保活（远端 agent）。",
+            "已恢复远端会话（屏幕可能含断线前输出回放；可用 clear 再 pwd 确认）。",
           );
         } else {
+          if (conn?.mode === "agent") {
+            pushNotice(sessionId, "已启用会话保活（远端 agent）。");
+          }
           await restoreCwdAfterReconnect(sessionId, cwdToRestore);
         }
       } catch (e) {
@@ -1645,9 +1649,10 @@ function App() {
                   ...persistFieldsFromConnect(conn),
                 });
                 const cwd = cwdBySession.get(tab.id);
+                // 工作区打开几乎总是新建 PTY；仅真 attach 时跳过 soft cd
                 if (
                   tab.kind !== "local" &&
-                  conn?.mode !== "agent" &&
+                  !conn?.reattached &&
                   isRestorableCwd(cwd)
                 ) {
                   void restoreCwdAfterReconnect(tab.id, cwd);
@@ -1704,7 +1709,7 @@ function App() {
               });
               if (
                 tab.kind !== "local" &&
-                conn?.mode !== "agent" &&
+                !conn?.reattached &&
                 isRestorableCwd(cwd)
               ) {
                 void restoreCwdAfterReconnect(sessionId, cwd);

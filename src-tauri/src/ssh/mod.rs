@@ -45,6 +45,9 @@ pub struct ConnectResult {
     /// "agent" | "classic"
     pub mode: String,
     pub agent_session_id: Option<String>,
+    /// agent 模式下是否 attach 到已有远端会话（未新建 PTY）
+    #[serde(default)]
+    pub reattached: bool,
 }
 
 #[derive(Clone)]
@@ -724,6 +727,7 @@ impl SshSessionManager {
                         session_id,
                         mode: "agent".into(),
                         agent_session_id: Some(agent_session_id),
+                        reattached: handshake.reattached,
                     });
                 }
                 Err(e) => {
@@ -766,6 +770,7 @@ impl SshSessionManager {
             session_id,
             mode: "classic".into(),
             agent_session_id: None,
+            reattached: false,
         })
     }
 

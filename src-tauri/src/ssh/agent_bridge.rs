@@ -407,6 +407,8 @@ pub struct AgentHandshake {
     pub replay: Vec<u8>,
     /// 握手后尚未消费的粘包缓冲
     pub pending: Vec<u8>,
+    /// 是否成功 attach 到已有远端会话（未新建 PTY）
+    pub reattached: bool,
 }
 
 pub fn agent_handshake(
@@ -427,7 +429,7 @@ pub fn agent_handshake(
         return Err(format!("agent auth failed: {auth}"));
     }
 
-    let (agent_session_id, attached) = if let Some(id) =
+    let (agent_session_id, attached, reattached) = if let Some(id) =
         prefer_id.map(str::trim).filter(|s| !s.is_empty())
     {
         write_line(
@@ -436,7 +438,7 @@ pub fn agent_handshake(
         )?;
         let att = read_json_line(channel, &mut buf, Duration::from_secs(15))?;
         if att.get("type").and_then(|v| v.as_str()) == Some("attached") {
-            (id.to_string(), att)
+            (id.to_string(), att, true)
         } else {
             write_line(
                 channel,
@@ -468,7 +470,7 @@ pub fn agent_handshake(
                 if att2.get("type").and_then(|v| v.as_str()) != Some("attached") {
                     return Err(format!("attach failed: {att2}"));
                 }
-                (new_id, att2)
+                (new_id, att2, false)
             } else {
                 let new_id = created
                     .get("sessionId")
@@ -483,7 +485,7 @@ pub fn agent_handshake(
                 if att2.get("type").and_then(|v| v.as_str()) != Some("attached") {
                     return Err(format!("attach failed: {att2}"));
                 }
-                (new_id, att2)
+                (new_id, att2, false)
             }
         }
     } else {
@@ -505,7 +507,7 @@ pub fn agent_handshake(
         if att.get("type").and_then(|v| v.as_str()) != Some("attached") {
             return Err(format!("attach failed: {att}"));
         }
-        (new_id, att)
+        (new_id, att, false)
     };
 
     let replay = attached
@@ -519,6 +521,7 @@ pub fn agent_handshake(
         agent_session_id,
         replay,
         pending: buf,
+        reattached,
     })
 }
 
