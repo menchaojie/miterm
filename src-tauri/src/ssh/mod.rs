@@ -488,28 +488,15 @@ fn run_agent_session_io(
                 }
             }
 
-            match agent_bridge::agent_try_read_message(&mut channel, &mut line_buf) {
-                Ok(Some(msg)) => {
-                    ka_fail_streak = 0;
-                    read_warn_streak = 0;
-                    if agent_bridge::message_is_session_closed(&msg, &agent_session_id) {
-                        eprintln!("[ssh/agent] remote pty closed ({session_id})");
-                        break 'io Some("remote");
-                    }
-                    if let Some(data) = agent_bridge::message_output_bytes(&msg) {
-                        let payload = SshOutputPayload {
-                            session_id: session_id.clone(),
-                            data,
-                        };
-                        if app.emit("ssh-output", payload).is_err() {
-                            eprintln!(
-                                "[ssh/agent] emit ssh-output failed ({session_id}), keep session"
-                            );
-                        }
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => {
+            // 缓冲无完整行才读通道；已有行则直接拆，避免每行白等 READ_POLL。
+            // 一次尽量吸干 socket，连续 output 合并 emit。
+            if !agent_bridge::buffer_has_complete_line(&line_buf) {
+                if let Err(e) = agent_bridge::agent_fill_available(
+                    &session,
+                    &mut channel,
+                    &mut line_buf,
+                    READ_POLL_TIMEOUT_MS,
+                ) {
                     let low = e.to_ascii_lowercase();
                     if low.contains("eof") || low.contains("fatal") {
                         eprintln!("[ssh/agent] tunnel dead ({session_id}): {e}");
@@ -525,7 +512,52 @@ fn run_agent_session_io(
                         );
                     }
                     thread::sleep(Duration::from_millis(20));
+                    continue;
                 }
+            }
+
+            let mut out_batch: Vec<u8> = Vec::new();
+            let mut closed = false;
+            let mut got_any = false;
+            loop {
+                match agent_bridge::agent_pop_buffered_message(&mut line_buf) {
+                    Ok(None) => break,
+                    Ok(Some(msg)) => {
+                        got_any = true;
+                        if agent_bridge::message_is_session_closed(&msg, &agent_session_id)
+                        {
+                            closed = true;
+                            break;
+                        }
+                        if let Some(data) = agent_bridge::message_output_bytes(&msg) {
+                            out_batch.extend_from_slice(&data);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[ssh/agent] bad frame ({session_id}): {e}");
+                        break 'io Some("error");
+                    }
+                }
+            }
+            if !out_batch.is_empty() {
+                ka_fail_streak = 0;
+                read_warn_streak = 0;
+                let payload = SshOutputPayload {
+                    session_id: session_id.clone(),
+                    data: out_batch,
+                };
+                if app.emit("ssh-output", payload).is_err() {
+                    eprintln!(
+                        "[ssh/agent] emit ssh-output failed ({session_id}), keep session"
+                    );
+                }
+            } else if got_any {
+                ka_fail_streak = 0;
+                read_warn_streak = 0;
+            }
+            if closed {
+                eprintln!("[ssh/agent] remote pty closed ({session_id})");
+                break 'io Some("remote");
             }
         }
     };

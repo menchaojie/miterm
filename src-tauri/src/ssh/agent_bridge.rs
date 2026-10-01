@@ -560,22 +560,52 @@ pub fn agent_send_kill(channel: &mut ssh2::Channel, agent_session_id: &str) {
     );
 }
 
-/// 从缓冲/通道读出下一条完整 JSON；无完整行时返回 Ok(None)（软）。
-pub fn agent_try_read_message(
-    channel: &mut ssh2::Channel,
+pub fn buffer_has_complete_line(buf: &[u8]) -> bool {
+    buf.contains(&b'\n')
+}
+
+/// 从已有缓冲拆出下一条完整 JSON 行；无完整行返回 Ok(None)，不读通道。
+pub fn agent_pop_buffered_message(
     buf: &mut Vec<u8>,
 ) -> Result<Option<serde_json::Value>, String> {
+    loop {
+        let Some(pos) = buf.iter().position(|&b| b == b'\n') else {
+            return Ok(None);
+        };
+        let line = buf.drain(..=pos).collect::<Vec<u8>>();
+        let text = String::from_utf8_lossy(&line);
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| format!("agent json: {e}"))?;
+        return Ok(Some(v));
+    }
+}
+
+fn agent_read_into_buf(
+    channel: &mut ssh2::Channel,
+    buf: &mut Vec<u8>,
+) -> Result<usize, String> {
     let mut tmp = [0u8; 8192];
     match channel.read(&mut tmp) {
         Ok(0) => {
             if channel.eof() {
                 return Err("agent eof".into());
             }
+            Ok(0)
         }
-        Ok(n) => buf.extend_from_slice(&tmp[..n]),
+        Ok(n) => {
+            buf.extend_from_slice(&tmp[..n]);
+            Ok(n)
+        }
         Err(e)
             if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut => {}
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
+            Ok(0)
+        }
         Err(e) => {
             let msg = e.to_string().to_ascii_lowercase();
             if msg.contains("connection reset")
@@ -584,23 +614,33 @@ pub fn agent_try_read_message(
             {
                 return Err(format!("agent fatal: {e}"));
             }
-            // 其它错误交给上层决定
-            return Err(format!("agent read: {e}"));
+            Err(format!("agent read: {e}"))
         }
     }
+}
 
-    if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
-        let line = buf.drain(..=pos).collect::<Vec<u8>>();
-        let text = String::from_utf8_lossy(&line);
-        let text = text.trim();
-        if text.is_empty() {
-            return Ok(None);
+/// 在一次阻塞读之后，用短超时尽量再吸干 socket，减少「一行一包」往返。
+pub fn agent_fill_available(
+    session: &ssh2::Session,
+    channel: &mut ssh2::Channel,
+    buf: &mut Vec<u8>,
+    poll_timeout_ms: u32,
+) -> Result<(), String> {
+    agent_read_into_buf(channel, buf)?;
+    // 短超时追加读：已到的数据尽快进缓冲，再统一拆行
+    session.set_timeout(1);
+    loop {
+        match agent_read_into_buf(channel, buf) {
+            Ok(0) => break,
+            Ok(_) => continue,
+            Err(e) => {
+                session.set_timeout(poll_timeout_ms);
+                return Err(e);
+            }
         }
-        let v: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| format!("agent json: {e}"))?;
-        return Ok(Some(v));
     }
-    Ok(None)
+    session.set_timeout(poll_timeout_ms);
+    Ok(())
 }
 
 pub fn message_output_bytes(msg: &serde_json::Value) -> Option<Vec<u8>> {
