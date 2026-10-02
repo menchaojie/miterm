@@ -1,18 +1,51 @@
-# miterm — SSH 远程终端（Tauri MVP）
+# miterm
 
-基于 **Tauri 2 + Rust + React + TypeScript + xterm.js** 的跨平台 SSH 终端客户端。当前阶段为 **MVP**：密码登录、多会话 Tab、远程 Shell。
+跨平台 SSH / 本地终端客户端（**v1.0.9**）。  
+技术栈：**Tauri 2 + Rust + React + TypeScript + xterm.js**。
+
+密码登录、多会话 Tab、主机夹分屏、多机并发、工作区、SFTP、常用命令；可选远端 **miterm-agent** 保活（断线后 shell 仍在，重连 attach）。
+
+## 架构概览
+
+```
+React UI（主机 / Tab / 分屏 / xterm）
+    invoke ↓          ↑ event（ssh-output / ssh-closed）
+Rust（ssh2 · portable-pty · SQLite）
+    ├─ 经典 SSH PTY
+    ├─ 保活：ensure agent → direct-tcpip → NDJSON
+    └─ SFTP 旁路独立连接（不堵终端）
+远端（可选）~/.miterm-agent 握着真正的 PTY
+```
+
+| 层 | 职责 |
+|----|------|
+| `src/` | 界面编排、cwd 跟踪、工作区 JSON |
+| `src-tauri/` | 连接读写、SFTP、主机/工作区/命令持久化 |
+| `agent/` | Linux 保活进程（独立 crate，当前 **0.1.2**） |
+
+- **会话只活在内存**；SQLite 存主机、工作区蓝图、常用命令。
+- 每条连接一个 `sessionId`；主机夹（同机分屏）与并发组（多机网格）互斥归属。
+- 输入走 `invoke`，输出走 `ssh-output` 事件。细节见 [开发文档](docs/开发文档.md)、[保活Agent](docs/保活Agent.md)。
 
 ## 文档
 
 | 文档 | 说明 |
 |------|------|
-| [docs/环境安装清单.md](docs/环境安装清单.md) | Ubuntu 22.04 开发环境安装步骤 |
-| [docs/Windows环境安装清单.md](docs/Windows环境安装清单.md) | Windows 10/11 开发环境安装步骤 |
-| [docs/开发文档.md](docs/开发文档.md) | 架构、目录约定、接口、扩展路线 |
-| [docs/使用与Windows联调说明.md](docs/使用与Windows联调说明.md) | **使用说明、Linux 编译检查、Windows GUI 联调** |
-| [docs/保活Agent.md](docs/保活Agent.md) | **远端 PTY 保活 agent（miterm-agent）架构 / 构建 / 协议** |
+| [docs/使用与Windows联调说明.md](docs/使用与Windows联调说明.md) | 使用说明、Linux 编译、Windows GUI 联调 |
+| [docs/开发文档.md](docs/开发文档.md) | 架构、目录、接口、变更记录 |
+| [docs/保活Agent.md](docs/保活Agent.md) | miterm-agent 部署 / 协议 / 构建 |
+| [docs/环境安装清单.md](docs/环境安装清单.md) | Ubuntu 22.04 开发环境 |
+| [docs/Windows环境安装清单.md](docs/Windows环境安装清单.md) | Windows 10/11 开发环境 |
 
 ## 快速开始
+
+**Windows / 有桌面的 Linux：**
+
+```powershell
+cd D:\Codes\miterm
+pnpm install
+pnpm tauri dev
+```
 
 **Linux（无桌面，仅编译）：**
 
@@ -22,53 +55,53 @@ pnpm install && pnpm run build
 cd src-tauri && cargo build
 ```
 
-**Windows / 有桌面的 Linux（GUI 联调）：**
+发布安装包：`pnpm tauri build`（产物在 `src-tauri/target/release/bundle/`）。
 
-```powershell
-cd D:\Codes\miterm
-pnpm install
-pnpm tauri dev
-```
+## 功能
 
-详见 [使用与 Windows 联调说明](docs/使用与Windows联调说明.md)。
+**连接与会话**
 
-## MVP 范围
+- 密码 SSH；本地终端（PowerShell / cmd / Git Bash / 自定义路径）作为主机条目
+- 统一 Tab：固定「主页」+ 多会话；回主页不断开
+- 断线可手动/自动重连（可关）；TCP/SSH keepalive
+- **会话保活**（默认开）：自动部署 `~/.miterm-agent`，闪断 attach 同一 shell；失败回退经典 PTY
 
-- 密码 SSH 登录
-- 统一 Tab：**固定「主页」**（图标+文字）+ 多会话终端（关会话 Tab 即断开）
-- **本地终端**：作为主机条目（与 SSH 同级，可分类）；增加主机时选择类型；Git Bash 等可配置路径
-- **主页侧栏常开**：仅「主机 | 工作区」；主机 Tab 筛选右侧扁平列表（数量对齐；选中浅底）；工作区列表只显示名称，单击详情、双击打开
-- **会话侧栏**：工作区 | 远程文件(SSH) | 命令；命令列表只显示标题，点击弹窗可填入/运行/编辑；**Ctrl+Shift+P** 命令面板仍可用
-- **主机夹分屏**：右键垂直/水平/**田字**分割在**当前二级 Tab**内加窗格（不自动新建二级 Tab）；`+` 才新建二级 Tab；可拖分割条；分屏支持并发输入；右键可加入/退出/全部加入/全部退出并发；选中文本可复制；右键可粘贴；Ctrl+点击打开链接
-- **工作区**：侧栏可保存/打开命名的主机夹或并发组合（含分屏布局与各窗 cwd）；「保存当前」新建、「更新保存」覆盖来源；「恢复目录」按快照软 cd；详情可改名；按**独立工作区分类**分组；总是新开一级 Tab
-- **保存命令**：会话侧栏「命令」Tab；独立命令分类；详情弹窗填入/运行；跟随并发同步
-- **终端字号**：设置可改字号；默认启用 Ctrl+滚轮在终端上缩放字体（仅终端，不影响界面）；可关闭该手势
-- 设置中可自定义快捷键（默认 Ctrl+Tab 轮换会话 Tab；Ctrl+Shift+[ / ] 切窗格；Ctrl+Alt+方向键跳转相邻窗格；Ctrl+Shift+空格交替全部加入/退出并发；Ctrl+Shift+E **会话页**开关侧栏；Ctrl+Shift+P 命令面板；Ctrl+1～9；终端内可用）
-- 切换到会话 Tab 后自动聚焦终端，可直接输入
-- **并发会话**：勾选多台主机一键同屏连接（网格格子）；格内键入可同步到已加入「并发输入」的会话
-- SQLite 保存主机（明文密码，本机便利）
-- xterm 终端 + 窗口 resize 同步 PTY
-- **SFTP**：侧栏「远程文件」浏览远程目录；上传支持菜单选文件/夹，或拖放到上传区确认后上传；支持整夹下载；传输中显示底部进度条，完成后该行「下载」左侧出现「已下载」可打开本机位置；本机文件已删时自动清标记；悬停可点 × 主动清除标记
+**布局**
 
-**会话保活**：设置默认开启；SSH 连接时自动部署 `~/.miterm-agent`，经隧道接入；断线重连可 attach 同一 shell。失败回退普通 PTY。详见 [保活Agent.md](docs/保活Agent.md)。
+- **主机夹**：同机二级 Tab；右键垂直 / 水平 / 田字分屏；拖分割条；分屏可并发输入
+- **并发组**：勾选多机同屏网格；格内键入可同步到已加入的会话
 
-**暂不包含**：私钥、密码加密、Shadcn。
+**工作区与命令**
+
+- 保存/打开主机夹或并发组合（布局 + 各窗 cwd）；保存当前 / 更新保存 / 恢复目录
+- 常用命令 + 独立分类；侧栏或 **Ctrl+Shift+P** 面板填入/运行（跟随并发同步）
+
+**文件与终端**
+
+- SFTP 侧栏：浏览、上传（菜单或拖放确认）、整夹下载；进度条；「已下载」可打开本机位置
+- xterm；字号设置与 Ctrl+滚轮缩放；复制/粘贴；Ctrl+点击打开链接
+- 快捷键可配（Tab 轮换、窗格跳转、侧栏、命令面板等）
+
+**数据**：SQLite 存主机（明文密码，本机便利）、分类、工作区、命令。
+
+**暂不包含**：私钥 / 证书、跳板机、密码加密、`known_hosts`、Shadcn。
 
 ## 环境要求
 
-- Ubuntu 22.04 LTS（主开发机）或 Windows 10/11（GUI 联调）
+- Ubuntu 22.04 或 Windows 10/11
 - Rust stable、Node 20+、pnpm
-- 见 [环境安装清单](docs/环境安装清单.md) / [Windows 环境安装清单](docs/Windows环境安装清单.md)
+- Windows 另需 MSVC Build Tools（见环境清单）
 
 ## 从 miterminal 迁移
 
-包名 / 标识符已改为 `miterm` / `com.miterm.app`。首次启动若新数据目录尚无主机库，会自动从旧目录拷贝 `hosts.db`（Windows：`%APPDATA%\com.miterminal.app\`）。快捷键等 `localStorage` 设置若仍留在旧 WebView 配置中，需在设置里重新确认一次。
+标识符为 `com.miterm.app`。首次启动若新数据目录无库，会从旧 `%APPDATA%\com.miterminal.app\` 拷贝 `hosts.db`。`localStorage` 设置若未带过来，在「设置」里确认一次即可。
 
-## 调试方法
+## 调试
 
 ```powershell
 cd D:\Codes\miterm
-# 每次调试都需要终端加入
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"
 pnpm tauri dev
 ```
+
+浏览器打开 `http://localhost:9222` 可检视 WebView。
